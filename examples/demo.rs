@@ -24,6 +24,7 @@ struct State {
     socket_color: egui::Color32,
     wire_width: f32,
     wire_color: egui::Color32,
+    wire_curvature: f32,
     auto_layout: bool,
     node_spacing: [f32; 2],
     node_id_map: HashMap<egui::Id, NodeIndex>,
@@ -69,6 +70,7 @@ impl App {
             socket_radius: 3.0,
             wire_width: 1.0,
             wire_color: ctx.style().visuals.weak_text_color(),
+            wire_curvature: 0.5,
             flow: egui::Direction::TopDown,
             auto_layout: true,
             node_spacing: [1.0, 1.0],
@@ -266,7 +268,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
     let shift_held = ui.input(|i| i.modifiers.shift);
     let mut clicked_on_edge = false;
     let selection_threshold = state.wire_width * 8.0; // Threshold for selecting the edge
-
+    let wire_curvature = Some(state.wire_curvature);
     for e in indices {
         let (na, nb) = state.graph.edge_endpoints(e).unwrap();
         let (output, input) = *state.graph.edge_weight(e).unwrap();
@@ -274,7 +276,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
         let b = egui::Id::new(nb);
         let a_out = ectx.output(ui, a, output).unwrap();
         let b_in = ectx.input(ui, b, input).unwrap();
-        let bezier = egui_graph::bezier::Cubic::from_edge_points(a_out, b_in);
+        let bezier = egui_graph::bezier::Cubic::from_edge_points(a_out, b_in, wire_curvature);
         let dist_per_pt = 5.0;
         let pts: Vec<_> = bezier.flatten(dist_per_pt).collect();
 
@@ -312,7 +314,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        let bezier = edge.bezier_cubic();
+        let bezier = edge.bezier_cubic(wire_curvature);
         let dist_per_pt = 5.0;
         let pts = bezier.flatten(dist_per_pt).collect();
         ui.painter().add(egui::Shape::line(pts, stroke));
