@@ -86,6 +86,10 @@ fn update(mut egui_context: ResMut<EguiContext>, mut state: ResMut<State>) {
                         ui.radio_value(&mut state.flow, egui::Direction::BottomUp, "Up");
                     });
                     ui.horizontal(|ui| {
+                        ui.label("Wire curvature:");
+                        ui.add(egui::Slider::new(&mut state.wire_curvature, 0.0..=1.0));
+                    });
+                    ui.horizontal(|ui| {
                         ui.label("Wire width:");
                         ui.add(egui::Slider::new(&mut state.wire_width, 0.5..=10.0));
                     });
@@ -113,6 +117,7 @@ struct State {
     socket_color: egui::Color32,
     wire_width: f32,
     wire_color: egui::Color32,
+    wire_curvature: f32,
 }
 
 #[derive(Default)]
@@ -240,6 +245,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
         width: state.wire_width,
         color: state.wire_color,
     };
+    let wire_curvature = Some(state.wire_curvature);
     for e in indices {
         let (na, nb) = state.graph.edge_endpoints(e).unwrap();
         let (output, input) = *state.graph.edge_weight(e).unwrap();
@@ -247,7 +253,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
         let b = egui::Id::new(nb);
         let a_out = ectx.output(ui, a, output).unwrap();
         let b_in = ectx.input(ui, b, input).unwrap();
-        let bezier = egui_graph::bezier::Cubic::from_edge_points(a_out, b_in);
+        let bezier = egui_graph::bezier::Cubic::from_edge_points(a_out, b_in, wire_curvature);
         let dist_per_pt = 5.0;
         let pts: Vec<_> = bezier.flatten(dist_per_pt).collect();
         ui.painter().add(egui::Shape::line(pts.clone(), stroke));
@@ -255,7 +261,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        let bezier = edge.bezier_cubic();
+        let bezier = edge.bezier_cubic(wire_curvature);
         let dist_per_pt = 5.0;
         let pts = bezier.flatten(dist_per_pt).collect();
         ui.painter().add(egui::Shape::line(pts, stroke));
@@ -297,6 +303,7 @@ impl Default for State {
             socket_color: Default::default(),
             socket_radius: 3.0,
             wire_width: 1.0,
+            wire_curvature: 0.5,
             wire_color: Default::default(),
             flow: egui::Direction::LeftToRight,
         }
