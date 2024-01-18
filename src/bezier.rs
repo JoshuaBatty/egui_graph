@@ -11,13 +11,22 @@ impl Cubic {
     /// Construct a cubic curve from the start and end points (and normals) of an edge.
     ///
     /// The normals of the associated input/output are required in order to determine ctrl points.
-    pub fn from_edge_points(a: (egui::Pos2, egui::Vec2), b: (egui::Pos2, egui::Vec2)) -> Self {
+    ///
+    /// `curvature_factor` specifies the position of the curvature peak in the curve as a factor of the total distance.
+    /// It should be a value between 0.0 and 1.0.
+    /// If not specified, it defaults to 0.5 (i.e., the peak is at the midpoint of the curve).
+    pub fn from_edge_points(
+        a: (egui::Pos2, egui::Vec2),
+        b: (egui::Pos2, egui::Vec2),
+        curvature_factor: Option<f32>,
+    ) -> Self {
         let (from, a_norm) = a;
         let (to, b_norm) = b;
         let distance = from.distance(to);
-        let half_distance = distance * 0.5;
-        let ctrl1 = from + a_norm * half_distance;
-        let ctrl2 = to + b_norm * half_distance;
+        let curvature_factor = curvature_factor.unwrap_or(0.5);
+        let peak_distance = distance * curvature_factor;
+        let ctrl1 = from + a_norm * peak_distance;
+        let ctrl2 = to + b_norm * peak_distance;
         Self {
             from,
             ctrl1,
