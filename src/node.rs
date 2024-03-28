@@ -602,7 +602,7 @@ impl DerefMut for NodeResponse {
 /// The default frame styling used for the `Node`'s `Window`.
 pub fn default_frame(style: &egui::Style) -> egui::Frame {
     let mut frame = egui::Frame::window(style);
-    frame.shadow.extrusion *= 0.25;
+    frame.shadow.offset = egui::Vec2::ZERO;
     frame.stroke.width = 0.0;
     frame
 }
