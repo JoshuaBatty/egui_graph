@@ -152,6 +152,12 @@ pub struct NodeSockets {
 #[derive(Clone)]
 pub struct Sockets {
     count: usize,
+    layout: SocketLayout,
+}
+
+/// Inlet/outlet layout.
+#[derive(Clone)]
+struct SocketLayout {
     start: egui::Pos2,
     step: egui::Vec2,
 }
@@ -620,7 +626,7 @@ impl NodeSockets {
         if self.input.count <= ix {
             return None;
         }
-        let pos = self.input.start + self.input.step * ix as f32;
+        let pos = self.input.layout.start + self.input.layout.step * ix as f32;
         let norm = match self.flow {
             egui::Direction::LeftToRight => egui::Vec2::new(-1.0, 0.0),
             egui::Direction::RightToLeft => egui::Vec2::new(1.0, 0.0),
@@ -637,7 +643,7 @@ impl NodeSockets {
         if self.output.count <= ix {
             return None;
         }
-        let pos = self.output.start + self.output.step * ix as f32;
+        let pos = self.output.layout.start + self.output.layout.step * ix as f32;
         let norm = match self.flow {
             egui::Direction::LeftToRight => egui::Vec2::new(1.0, 0.0),
             egui::Direction::RightToLeft => egui::Vec2::new(-1.0, 0.0),

@@ -1,4 +1,4 @@
-use crate::NodesCtx;
+use crate::{NodeSockets, NodesCtx, SocketLayout};
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 
@@ -391,76 +391,17 @@ impl Node {
 
         // The inlets/outlets.
         if self.inputs > 0 || self.outputs > 0 {
-            let in_gap = |len: f32| {
-                if self.inputs > 1 {
-                    len / (self.inputs - 1) as f32
-                } else {
-                    0.0
-                }
-            };
-            let out_gap = |len: f32| {
-                if self.outputs > 1 {
-                    len / (self.outputs - 1) as f32
-                } else {
-                    0.0
-                }
-            };
-            let (mut in_pos, mut out_pos, in_step, out_step) = match self.flow {
-                egui::Direction::LeftToRight => {
-                    let len = response.rect.height() - socket_padding * 2.0;
-                    let in_step = egui::Vec2::new(0.0, in_gap(len));
-                    let out_step = egui::Vec2::new(0.0, out_gap(len));
-                    let start = response.rect.min.y + socket_padding;
-                    let in_pos = egui::Pos2::new(response.rect.min.x, start);
-                    let out_pos = egui::Pos2::new(response.rect.max.x, start);
-                    (in_pos, out_pos, in_step, out_step)
-                }
-                egui::Direction::RightToLeft => {
-                    let len = response.rect.height() - socket_padding * 2.0;
-                    let in_step = egui::Vec2::new(0.0, in_gap(len));
-                    let out_step = egui::Vec2::new(0.0, out_gap(len));
-                    let start = response.rect.min.y + socket_padding;
-                    let in_pos = egui::Pos2::new(response.rect.max.x, start);
-                    let out_pos = egui::Pos2::new(response.rect.min.x, start);
-                    (in_pos, out_pos, in_step, out_step)
-                }
-                egui::Direction::TopDown => {
-                    let len = response.rect.width() - socket_padding * 2.0;
-                    let in_step = egui::Vec2::new(in_gap(len), 0.0);
-                    let out_step = egui::Vec2::new(out_gap(len), 0.0);
-                    let start = response.rect.min.x + socket_padding;
-                    let in_pos = egui::Pos2::new(start, response.rect.min.y);
-                    let out_pos = egui::Pos2::new(start, response.rect.max.y);
-                    (in_pos, out_pos, in_step, out_step)
-                }
-                egui::Direction::BottomUp => {
-                    let len = response.rect.width() - socket_padding * 2.0;
-                    let in_step = egui::Vec2::new(in_gap(len), 0.0);
-                    let out_step = egui::Vec2::new(out_gap(len), 0.0);
-                    let start = response.rect.min.x + socket_padding;
-                    let in_pos = egui::Pos2::new(start, response.rect.max.y);
-                    let out_pos = egui::Pos2::new(start, response.rect.min.y);
-                    (in_pos, out_pos, in_step, out_step)
-                }
-            };
-
             // Store the layout of the sockets for edge instantiation.
-            let sockets = crate::NodeSockets {
-                flow: self.flow,
-                input: crate::Sockets {
-                    count: self.inputs,
-                    start: in_pos,
-                    step: in_step,
-                },
-                output: crate::Sockets {
-                    count: self.outputs,
-                    start: out_pos,
-                    step: out_step,
-                },
-            };
+            let sockets = node_sockets(
+                self.inputs,
+                self.outputs,
+                socket_padding,
+                response.rect,
+                self.flow,
+            );
             let gmem_arc = crate::memory(ui, ctx.graph_id);
             let mut gmem = gmem_arc.lock().expect("failed to lock graph temp memory");
-            gmem.sockets.insert(self.id, sockets);
+            gmem.sockets.insert(self.id, sockets.clone());
 
             // Check whether or not this node has a pressed socket.
             let pressed_socket = gmem
@@ -505,6 +446,8 @@ impl Node {
 
             let color = self.socket_color.unwrap_or(ui.visuals().text_color());
             let hl_size = (self.socket_radius + 4.0).max(4.0);
+            let mut in_pos = sockets.input.layout.start;
+            let mut out_pos = sockets.output.layout.start;
             for ix in 0..self.inputs {
                 if paint_highlight(SocketKind::Input, ix) {
                     ui.painter()
@@ -512,7 +455,7 @@ impl Node {
                 }
                 ui.painter()
                     .circle_filled(in_pos, self.socket_radius, color);
-                in_pos += in_step;
+                in_pos += sockets.input.layout.step;
             }
             for ix in 0..self.outputs {
                 if paint_highlight(SocketKind::Output, ix) {
@@ -521,7 +464,7 @@ impl Node {
                 }
                 ui.painter()
                     .circle_filled(out_pos, self.socket_radius, color);
-                out_pos += out_step;
+                out_pos += sockets.output.layout.step;
             }
         }
 
@@ -605,6 +548,112 @@ pub fn default_frame(style: &egui::Style) -> egui::Frame {
     frame.shadow.offset = egui::Vec2::ZERO;
     frame.stroke.width = 0.0;
     frame
+}
+
+/// The layout of the input and output socket layout.
+fn input_output_layout(
+    inputs: usize,
+    outputs: usize,
+    socket_padding: f32,
+    rect: egui::Rect,
+    flow: egui::Direction,
+) -> (SocketLayout, SocketLayout) {
+    let in_gap = |len: f32| {
+        if inputs > 1 {
+            len / (inputs - 1) as f32
+        } else {
+            0.0
+        }
+    };
+    let out_gap = |len: f32| {
+        if outputs > 1 {
+            len / (outputs - 1) as f32
+        } else {
+            0.0
+        }
+    };
+    let y_len = || rect.height() - socket_padding * 2.0;
+    let x_len = || rect.width() - socket_padding * 2.0;
+    match flow {
+        egui::Direction::LeftToRight => {
+            let len = y_len();
+            let start = rect.min.y + socket_padding;
+            let input = SocketLayout {
+                start: egui::Pos2::new(rect.min.x, start),
+                step: egui::Vec2::new(0.0, in_gap(len)),
+            };
+            let output = SocketLayout {
+                start: egui::Pos2::new(rect.max.x, start),
+                step: egui::Vec2::new(0.0, out_gap(len)),
+            };
+            (input, output)
+        }
+        egui::Direction::RightToLeft => {
+            let len = y_len();
+            let start = rect.min.y + socket_padding;
+            let input = SocketLayout {
+                start: egui::Pos2::new(rect.max.x, start),
+                step: egui::Vec2::new(0.0, in_gap(len)),
+            };
+            let output = SocketLayout {
+                start: egui::Pos2::new(rect.min.x, start),
+                step: egui::Vec2::new(0.0, out_gap(len)),
+            };
+            (input, output)
+        }
+        egui::Direction::TopDown => {
+            let len = x_len();
+            let start = rect.min.x + socket_padding;
+            let input = SocketLayout {
+                start: egui::Pos2::new(start, rect.min.y),
+                step: egui::Vec2::new(in_gap(len), 0.0),
+            };
+            let output = SocketLayout {
+                start: egui::Pos2::new(start, rect.max.y),
+                step: egui::Vec2::new(out_gap(len), 0.0),
+            };
+            (input, output)
+        }
+        egui::Direction::BottomUp => {
+            let len = x_len();
+            let start = rect.min.x + socket_padding;
+            let input = SocketLayout {
+                start: egui::Pos2::new(start, rect.max.y),
+                step: egui::Vec2::new(in_gap(len), 0.0),
+            };
+            let output = SocketLayout {
+                start: egui::Pos2::new(start, rect.min.y),
+                step: egui::Vec2::new(out_gap(len), 0.0),
+            };
+            (input, output)
+        }
+    }
+}
+
+/// Construct the `NodeSockets` describing the default layout of inputs and
+/// outputs.
+fn node_sockets(
+    inputs: usize,
+    outputs: usize,
+    socket_padding: f32,
+    rect: egui::Rect,
+    flow: egui::Direction,
+) -> crate::NodeSockets {
+    let (input_layout, output_layout) =
+        input_output_layout(inputs, outputs, socket_padding, rect, flow);
+
+    // Store the layout of the sockets for edge instantiation.
+    NodeSockets {
+        flow,
+        input: crate::Sockets {
+            count: inputs,
+            layout: input_layout,
+        },
+        output: crate::Sockets {
+            count: outputs,
+            layout: output_layout,
+        },
+    }
 }
 
 fn only_primary_down(pointer: &egui::PointerState) -> bool {
