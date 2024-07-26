@@ -15,6 +15,7 @@ pub struct Node {
     socket_radius: f32,
     socket_color: Option<egui::Color32>,
     max_width: Option<f32>,
+    interpolate_position: bool,
     animation_time: f32,
 }
 
@@ -86,6 +87,7 @@ impl Node {
             outputs: 0,
             flow: egui::Direction::LeftToRight,
             socket_radius: 3.0,
+            interpolate_position: true,
             animation_time: 0.1,
         }
     }
@@ -152,6 +154,12 @@ impl Node {
         self
     }
 
+    /// Whether or not to interpolate the node's position over time.
+    pub fn interpolate_position(mut self, interpolate: bool) -> Self {
+        self.interpolate_position = interpolate;
+        self
+    }
+
     /// Present the `Node`'s `Window` and add the given contents.
     pub fn show(
         self,
@@ -192,14 +200,16 @@ impl Node {
             egui::Pos2::new(pos.x, pos.y)
         });
 
-        // Interpolate toward the desired position over time for auto-layout.
-        let pos_graph = {
+        let pos_graph = if self.interpolate_position {
+            // Interpolate toward the desired position over time for auto-layout.
             let ctx = ui.ctx();
             let idx = self.id.with("x");
             let idy = self.id.with("y");
             let x = ctx.animate_value_with_time(idx, target_pos_graph.x, self.animation_time);
             let y = ctx.animate_value_with_time(idy, target_pos_graph.y, self.animation_time);
             egui::Pos2::new(x, y)
+        } else {
+            *target_pos_graph
         };
 
         // Translate the graph position to a position within the UI.
