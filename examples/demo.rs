@@ -8,7 +8,7 @@ fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions::default();
     let name = "`egui_graph` demo";
-    eframe::run_native(name, options, Box::new(|cc| Box::new(App::new(cc))))
+    eframe::run_native(name, options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
 
 struct App {
@@ -172,7 +172,7 @@ fn nodes(nctx: &mut egui_graph::NodesCtx, ui: &mut egui::Ui, state: &mut State) 
                 }
                 NodeKind::DragValue(ref mut f) => {
                     ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(f).clamp_range(0.0..=255.0));
+                        ui.add(egui::DragValue::new(f).range(0.0..=255.0));
                     });
                 }
                 NodeKind::Slider(ref mut f) => {
@@ -322,8 +322,7 @@ fn graph_config(ui: &mut egui::Ui, state: &mut State) {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut state.auto_layout, "Automatic Layout");
                 ui.separator();
-                ui.scope(|ui| {
-                    ui.set_enabled(!state.auto_layout);
+                ui.add_enabled_ui(!state.auto_layout, |ui| {
                     if ui.button("Layout Once").clicked() {
                         state.view.layout = layout(&state.graph, state.flow, ui.ctx());
                     }

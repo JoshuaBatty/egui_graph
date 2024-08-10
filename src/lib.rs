@@ -460,7 +460,7 @@ impl Graph {
         }
 
         // Create a child UI over the full surface of the graph widget.
-        let mut ui = ui.child_ui(full_rect, *ui.layout());
+        let mut ui = ui.child_ui(full_rect, *ui.layout(), None);
         ui.set_clip_rect(full_rect);
 
         Show {
