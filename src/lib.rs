@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
+use egui::emath::TSTransform;
 #[cfg(feature = "layout")]
 pub use layout::layout;
 
@@ -115,30 +116,33 @@ pub type Layout = HashMap<egui::Id, egui::Pos2>;
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct Camera {
     /// Location of the camera relative to the center of the graph.
-    pub pos: egui::Pos2,
+    pub transform: TSTransform,
 }
 
 /// The context returned by the `Graph` widget. Allows for setting nodes and edges.
-pub struct Show {
+pub struct Show<'a> {
     /// Useful for accessing the `GraphTempMemory`.
     graph_id: egui::Id,
-    /// The full area covered by the `Graph` within the UI.
-    full_rect: egui::Rect,
-    /// The visible area of the graph's canvas.
-    visible_rect: egui::Rect,
-    /// If a selection is being performed with the mouse, this is the covered area.
-    selection_rect: Option<egui::Rect>,
-    /// Whether or not the primary mouse button was just released to perform the selection.
-    select: bool,
-    /// Whether or not the primary mouse button was just released to end edge creation.
-    socket_press_released: Option<node::Socket>,
+    /// The rect allocated in the UI for the graph.
+    graph_rect: egui::Rect,
     /// Track all nodes that were visited this update.
     ///
     /// We will use this to remove old node state on `drop`.
     visited: HashSet<egui::Id>,
     /// The child UI of the `Graph` widget for instantiating nodes and edges.
-    ui: egui::Ui,
+    ui: &'a mut egui::Ui,
 }
+
+// /// The full area covered by the `Graph` within the UI.
+// full_rect: egui::Rect,
+// /// The visible area of the graph's canvas.
+// visible_rect: egui::Rect,
+// /// If a selection is being performed with the mouse, this is the covered area.
+// selection_rect: Option<egui::Rect>,
+// /// Whether or not the primary mouse button was just released to perform the selection.
+// select: bool,
+// /// Whether or not the primary mouse button was just released to end edge creation.
+// socket_press_released: Option<node::Socket>,
 
 /// Information about the inputs and outputs for a particular node.
 #[derive(Clone)]
@@ -165,18 +169,19 @@ struct SocketLayout {
 /// A context to assist with the instantiation of node widgets.
 pub struct NodesCtx<'a> {
     graph_id: egui::Id,
-    full_rect: egui::Rect,
-    selection_rect: Option<egui::Rect>,
-    select: bool,
-    socket_press_released: Option<node::Socket>,
+    graph_rect: egui::Rect,
     visited: &'a mut HashSet<egui::Id>,
+    // full_rect: egui::Rect,
+    // selection_rect: Option<egui::Rect>,
+    // select: bool,
+    // socket_press_released: Option<node::Socket>,
 }
 
 /// A context to assist with the instantiation of edge widgets.
 pub struct EdgesCtx {
     graph_id: egui::Id,
-    full_rect: egui::Rect,
-    visible_rect: egui::Rect,
+    graph_rect: egui::Rect,
+    // visible_rect: egui::Rect,
 }
 
 /// The set of detected graph interaction for a single graph widget update prior
@@ -205,9 +210,54 @@ impl Graph {
     }
 
     /// Begin showing the parts of the Graph.
-    pub fn show(self, view: &mut View, ui: &mut egui::Ui) -> Show {
+    pub fn show<'ui>(self, view: &mut View, ui: &'ui mut egui::Ui) -> Show<'ui> {
+        let (id, graph_rect) = ui.allocate_space(ui.available_size());
+        let response = ui.interact(graph_rect, id, egui::Sense::click_and_drag());
+
+        // Allow dragging the background as well.
+        if response.dragged_by(egui::PointerButton::Middle) {
+            view.camera.transform.translation += response.drag_delta();
+        }
+
+        // Plot-like reset
+        if response.double_clicked() {
+            view.camera.transform = TSTransform::default();
+        }
+
+        let transform = TSTransform::from_translation(ui.min_rect().left_top().to_vec2())
+            * view.camera.transform;
+
+        if let Some(pointer) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+            // Note: doesn't catch zooming / panning if a button in this PanZoom container is hovered.
+            if response.hovered() {
+                let pointer_in_layer = transform.inverse() * pointer;
+                let (zoom_delta, pan_delta) =
+                    ui.ctx().input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
+
+                // Zoom in on pointer:
+                view.camera.transform = view.camera.transform
+                    * TSTransform::from_translation(pointer_in_layer.to_vec2())
+                    * TSTransform::from_scaling(zoom_delta)
+                    * TSTransform::from_translation(-pointer_in_layer.to_vec2());
+
+                // Pan:
+                view.camera.transform =
+                    TSTransform::from_translation(pan_delta) * view.camera.transform;
+            }
+        }
+
+        // Paint the background rect.
+        if self.background {
+            paint_background(graph_rect, ui);
+        }
+
+        // Paint some subtle dots to check camera movement.
+        dot_grid(id, graph_rect, view.camera.transform, ui);
+
+        // ------------------
+
         // The full area to be occuppied by the graph.
-        let full_rect = ui.available_rect_before_wrap();
+        let full_rect = graph_rect;
 
         // Draw the selection rectangle if there is one.
         let mut selection_rect = None;
@@ -262,31 +312,33 @@ impl Graph {
             select = interaction.select;
             socket_press_released = interaction.socket_press_released;
 
+            // FIXME: Remove this? Dragging handled by Area?
             // If the pointer is down and near an edge of the rect, move the camera in that
             // direction.
-            if drag_moves_camera(gmem.pressed.as_ref(), ptr_graph) {
-                view.camera.pos += drag_moves_camera_velocity(full_rect, ptr_screen, ui);
-            }
+            // if drag_moves_camera(gmem.pressed.as_ref(), ptr_graph) {
+            //     view.camera.pos += drag_moves_camera_velocity(full_rect, ptr_screen, ui);
+            // }
         }
 
-        // Check if we should drag or scroll the camera position.
-        if !ptr_in_use && ptr_on_graph {
-            ui.input(|i| {
-                // Middle mouse button moves camera.
-                if i.pointer.is_moving() && i.pointer.button_down(egui::PointerButton::Middle) {
-                    view.camera.pos -= pointer.delta();
-                }
-            });
-        }
+        // FIXME: Camera handled by Area?
+        // // Check if we should drag or scroll the camera position.
+        // if !ptr_in_use && ptr_on_graph {
+        //     ui.input(|i| {
+        //         // Middle mouse button moves camera.
+        //         if i.pointer.is_moving() && i.pointer.button_down(egui::PointerButton::Middle) {
+        //             view.camera.pos -= pointer.delta();
+        //         }
+        //     });
+        // }
 
-        // Paint the background rect.
-        if self.background {
-            paint_background(full_rect, ui);
-        }
+        // // Paint the background rect.
+        // if self.background {
+        //     paint_background(full_rect, ui);
+        // }
 
-        // Paint some subtle dots to check camera movement.
-        let visible_rect = egui::Rect::from_center_size(view.camera.pos, full_rect.size());
-        paint_grid_dots(&full_rect, &visible_rect, &view.camera, ui);
+        // // Paint some subtle dots to check camera movement.
+        // let visible_rect = egui::Rect::from_center_size(view.camera.pos(), full_rect.size());
+        // paint_grid_dots(&full_rect, &visible_rect, &view.camera, ui);
 
         // Draw the selection area if there is one.
         // TODO: Do this when `Show` is `drop`ped or finalised to draw over nodes, edges.
@@ -294,19 +346,20 @@ impl Graph {
             paint_selection_area(sel_rect, ui);
         }
 
-        // Create a child UI over the full surface of the graph widget.
-        let mut ui = ui.child_ui(full_rect, *ui.layout(), None);
-        ui.set_clip_rect(full_rect);
+        // // Create a child UI over the full surface of the graph widget.
+        // let mut ui = ui.child_ui(full_rect, *ui.layout(), None);
+        // ui.set_clip_rect(full_rect);
 
         Show {
             graph_id: self.id,
-            full_rect,
-            visible_rect,
-            selection_rect,
-            select,
-            socket_press_released,
+            graph_rect,
             visited: Default::default(),
             ui,
+            // full_rect,
+            // visible_rect,
+            // selection_rect,
+            // select,
+            // socket_press_released,
         }
     }
 }
@@ -578,8 +631,8 @@ fn paint_grid_dots(
     let x_dots = (visible_rect.min.x / dot_step) as i32..=(visible_rect.max.x / dot_step) as i32;
     let y_dots = (visible_rect.min.y / dot_step) as i32..=(visible_rect.max.y / dot_step) as i32;
     let half_size = full_rect.size() * 0.5;
-    let x_start = half_size.x - cam.pos.x;
-    let y_start = half_size.y - cam.pos.y;
+    let x_start = half_size.x - cam.pos().x;
+    let y_start = half_size.y - cam.pos().y;
     for x_dot in x_dots {
         for y_dot in y_dots.clone() {
             let x = x_start + x_dot as f32 * dot_step;
@@ -595,6 +648,47 @@ fn paint_grid_dots(
     }
 }
 
+// Paint some subtle dots to make it easy to track camera movement with no nodes.
+// The given transform is the camera's transform used to transform the layer.
+fn dot_grid(graph_id: egui::Id, graph_rect: egui::Rect, transform: TSTransform, ui: &egui::Ui) {
+    let window_layer = ui.layer_id();
+    let id = egui::Area::new(graph_id.with("background"))
+        .default_pos(egui::Pos2::new(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            // Clip the view to the viewable area.
+            let clip_rect = transform.inverse() * graph_rect;
+            ui.set_clip_rect(clip_rect);
+
+            // Use the interaction size as a rough gap.
+            let dot_step = ui.spacing().interact_size.y;
+            let vis = ui.style().noninteractive();
+            let rect = graph_rect;
+            let x_dots = (rect.min.x / dot_step) as i32..=(rect.max.x / dot_step) as i32;
+            let y_dots = (rect.min.y / dot_step) as i32..=(rect.max.y / dot_step) as i32;
+            let x_start = (clip_rect.min.x / dot_step).floor() * dot_step;
+            let y_start = (clip_rect.min.y / dot_step).floor() * dot_step;
+
+            for x_dot in x_dots {
+                for y_dot in y_dots.clone() {
+                    let x = x_start + x_dot as f32 * dot_step;
+                    let y = y_start + y_dot as f32 * dot_step;
+                    let r = egui::Rect::from_center_size([x, y].into(), [1.0; 2].into());
+                    let color = vis.bg_stroke.color;
+                    let stroke = egui::Stroke {
+                        width: 0.0,
+                        ..vis.bg_stroke
+                    };
+                    ui.painter().rect(r, 0.0, color, stroke);
+                }
+            }
+        })
+        .response
+        .layer_id;
+    ui.ctx().set_transform_layer(id, transform);
+    ui.ctx().set_sublayer(window_layer, id);
+}
+
 /// Paint the selection area rectangle.
 fn paint_selection_area(sel_rect: egui::Rect, ui: &mut egui::Ui) {
     let color = ui.visuals().weak_text_color();
@@ -608,13 +702,23 @@ impl Camera {
     /// Convert the given point `pos` from graph space (position is relative to centre of
     /// graph) to screen space (where the point is currently visible within the UI).
     pub fn graph_to_screen(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
-        graph_to_screen(self.pos, graph_rect, pos)
+        self.transform.inverse() * pos
+        // graph_to_screen(self.pos(), graph_rect, pos)
     }
 
     /// Convert the given point `pos` from screen space (where the point is currently
     /// visible within the UI) to graph space (position is relative to centre of graph).
     pub fn screen_to_graph(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
-        screen_to_graph(self.pos, graph_rect, pos)
+        self.transform * pos
+        // let transform = TSTransform::from_translation(ui.min_rect().left_top().to_vec2())
+        //     * view.camera.transform;
+        // screen_to_graph(self.pos(), graph_rect, pos)
+    }
+
+    // FIXME: Remove this - just added temporarily to minimize breakage while
+    // switching camera to transform.
+    pub fn pos(&self) -> egui::Pos2 {
+        self.transform.inverse().translation.to_pos2()
     }
 }
 
@@ -664,27 +768,24 @@ impl NodeSockets {
     }
 }
 
-impl Show {
+impl<'ui> Show<'ui> {
     /// Instantiate the nodes of the graph.
     pub fn nodes(mut self, content: impl FnOnce(&mut NodesCtx, &mut egui::Ui)) -> Self {
         {
             let Self {
                 graph_id,
-                full_rect,
-                selection_rect,
-                select,
-                socket_press_released,
+                graph_rect,
                 ref mut visited,
                 ref mut ui,
                 ..
             } = self;
             let mut ctx = NodesCtx {
                 graph_id,
-                full_rect,
-                selection_rect,
-                select,
-                socket_press_released,
+                graph_rect,
                 visited,
+                // selection_rect,
+                // select,
+                // socket_press_released,
             };
             content(&mut ctx, ui);
         }
@@ -695,16 +796,16 @@ impl Show {
     pub fn edges(mut self, content: impl FnOnce(&mut EdgesCtx, &mut egui::Ui)) -> Self {
         {
             let Self {
-                full_rect,
-                visible_rect,
                 graph_id,
+                graph_rect,
                 ref mut ui,
+                // visible_rect,
                 ..
             } = self;
             let mut ctx = EdgesCtx {
                 graph_id,
-                full_rect,
-                visible_rect,
+                graph_rect,
+                // visible_rect,
             };
             content(&mut ctx, ui);
         }
@@ -808,8 +909,10 @@ impl EdgesCtx {
                 (pos, Some((socket.kind, normal)))
             }
             _ => {
-                let cam_pos = self.visible_rect.center();
-                let pos = graph_to_screen(cam_pos, self.full_rect, pressed.current_pos);
+                // FIXME
+                let pos = egui::Pos2::new(0.0, 0.0);
+                // let cam_pos = self.visible_rect.center();
+                // let pos = graph_to_screen(cam_pos, self.graph_rect, pressed.current_pos);
                 (pos, None)
             }
         };
@@ -821,8 +924,8 @@ impl EdgesCtx {
     }
 
     /// The full rect occuppied by the graph widget.
-    pub fn full_rect(&self) -> egui::Rect {
-        self.full_rect
+    pub fn graph_rect(&self) -> egui::Rect {
+        self.graph_rect
     }
 }
 
@@ -854,7 +957,7 @@ impl EdgeInProgress {
     }
 }
 
-impl Drop for Show {
+impl<'ui> Drop for Show<'ui> {
     fn drop(&mut self) {
         self.prune_unused_nodes();
     }

@@ -175,6 +175,40 @@ impl Node {
             ref camera,
         } = *view;
 
+        // The area for the the node on the graph.
+        let window_layer = ui.layer_id();
+        let mut response = egui::Area::new(self.id) // FIXME: Combine ID with graph ID.
+            .default_pos(egui::Pos2::new(0.0, 0.0))
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                // Clip the node to the graph rect.
+                ui.set_clip_rect(camera.transform.inverse() * ctx.graph_rect);
+
+                // The frame for the widget.
+                egui::Frame::default()
+                    .rounding(egui::Rounding::same(4.0))
+                    .inner_margin(egui::Margin::same(8.0))
+                    .stroke(ui.ctx().style().visuals.window_stroke)
+                    .fill(ui.style().visuals.panel_fill)
+                    .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
+                        // // Ensure the ui is at least large enough to provide space for inputs/outputs.
+                        // let gap = egui::Vec2::splat(win_corner_radius * 2.0);
+                        // let min_size = min_size - gap;
+                        // ui.set_min_size(min_size);
+
+                        // Node widget.
+                        content(ui);
+                    });
+            })
+            .response;
+        ui.ctx()
+            .set_transform_layer(response.layer_id, camera.transform);
+        ui.ctx().set_sublayer(window_layer, response.layer_id);
+
+        //-----------------------------------------
+
         // Indicate that we've visited this node this update.
         ctx.visited.insert(self.id);
 
@@ -182,10 +216,10 @@ impl Node {
         let target_pos_graph = layout.entry(self.id).or_insert_with(|| {
             // If the mouse is over the graph, add the node under the mouse.
             // Otherwise, add the node to the top-left.
-            let mut pos = camera.pos - ctx.full_rect.center() + ui.spacing().item_spacing;
-            if ui.rect_contains_pointer(ctx.full_rect) {
+            let mut pos = camera.pos() - ctx.graph_rect.center() + ui.spacing().item_spacing;
+            if ui.rect_contains_pointer(ctx.graph_rect) {
                 ui.input(|i| i.pointer.hover_pos()).map(|ptr| {
-                    pos = ptr - ctx.full_rect.center() + camera.pos.to_vec2()
+                    pos = ptr - ctx.graph_rect.center() + camera.pos().to_vec2()
                         - ui.spacing().interact_size * 0.5;
                 });
             }
@@ -203,7 +237,7 @@ impl Node {
         };
 
         // Translate the graph position to a position within the UI.
-        let pos_screen = camera.graph_to_screen(ctx.full_rect, pos_graph);
+        let pos_screen = camera.graph_to_screen(ctx.graph_rect, pos_graph);
 
         // The window should always be at least the interaction size.
         let min_item_spacing = ui.spacing().item_spacing.x.min(ui.spacing().item_spacing.y);
@@ -234,7 +268,7 @@ impl Node {
         let mut frame = self.frame.unwrap_or_else(|| default_frame(ui.style()));
 
         let max_w = self.max_width.unwrap_or(ui.spacing().text_edit_width);
-        let max_size = egui::Vec2::new(max_w, ctx.full_rect.height());
+        let max_size = egui::Vec2::new(max_w, ctx.graph_rect.height());
 
         // Track changes in selection for the node response.
         let mut selection_changed = false;
@@ -245,31 +279,34 @@ impl Node {
         let (mut selected, in_selection_rect) = {
             let gmem_arc = crate::memory(ui, ctx.graph_id);
             let mut gmem = gmem_arc.lock().expect("failed to lock graph temp memory");
-            let in_selection_rect = match ctx.selection_rect {
-                None => false,
-                Some(sel_rect) => {
-                    let size = gmem
-                        .node_sizes
-                        .get(&self.id)
-                        .cloned()
-                        .unwrap_or(egui::Vec2::ZERO);
-                    let rect = egui::Rect::from_min_size(pos_screen, size);
-                    sel_rect.intersects(rect)
-                }
-            };
 
-            // Update the selection if the primary mouse button was just released.
-            if ctx.select {
-                if in_selection_rect {
-                    if gmem.selection.nodes.insert(self.id) {
-                        selection_changed = true;
-                    }
-                } else if !ui.input(|i| i.modifiers.ctrl) {
-                    if gmem.selection.nodes.remove(&self.id) {
-                        selection_changed = true;
-                    }
-                }
-            }
+            // FIXME
+            let in_selection_rect = false;
+            // let in_selection_rect = match ctx.selection_rect {
+            //     None => false,
+            //     Some(sel_rect) => {
+            //         let size = gmem
+            //             .node_sizes
+            //             .get(&self.id)
+            //             .cloned()
+            //             .unwrap_or(egui::Vec2::ZERO);
+            //         let rect = egui::Rect::from_min_size(pos_screen, size);
+            //         sel_rect.intersects(rect)
+            //     }
+            // };
+
+            // // Update the selection if the primary mouse button was just released.
+            // if ctx.select {
+            //     if in_selection_rect {
+            //         if gmem.selection.nodes.insert(self.id) {
+            //             selection_changed = true;
+            //         }
+            //     } else if !ui.input(|i| i.modifiers.ctrl) {
+            //         if gmem.selection.nodes.remove(&self.id) {
+            //             selection_changed = true;
+            //         }
+            //     }
+            // }
 
             let selected = gmem.selection.nodes.contains(&self.id);
 
@@ -285,32 +322,32 @@ impl Node {
             frame.stroke.color = color;
         }
 
-        let mut response = egui::Window::new("")
-            .id(self.id)
-            .frame(frame)
-            .resizable(false)
-            // TODO: These `min_*` and `default_size` methods seem to be totally ignored? Should
-            // fix this upstream, but for now we just set min size on the window's `Ui` instead.
-            .min_width(min_size.x)
-            .min_height(min_size.y)
-            .default_size(min_size)
-            // TODO: Only `max_size` seems to be considered here - `min_size` seems to be ignored.
-            .resize(|resize| resize.max_size(max_size).min_size(min_size))
-            .fixed_pos(pos_screen)
-            .collapsible(false)
-            .title_bar(false)
-            .auto_sized()
-            .constrain_to(egui::Rect::EVERYTHING)
-            .show(ui.ctx(), move |ui| {
-                // Ensure the ui is at least large enough to provide space for inputs/outputs.
-                let gap = egui::Vec2::splat(win_corner_radius * 2.0);
-                let min_size = min_size - gap;
-                ui.set_min_size(min_size);
-                // Set the user's content.
-                content(ui);
-            })
-            .expect("node windows are always open")
-            .response;
+        // let mut response = egui::Window::new("")
+        //     .id(self.id)
+        //     .frame(frame)
+        //     .resizable(false)
+        //     // TODO: These `min_*` and `default_size` methods seem to be totally ignored? Should
+        //     // fix this upstream, but for now we just set min size on the window's `Ui` instead.
+        //     .min_width(min_size.x)
+        //     .min_height(min_size.y)
+        //     .default_size(min_size)
+        //     // TODO: Only `max_size` seems to be considered here - `min_size` seems to be ignored.
+        //     .resize(|resize| resize.max_size(max_size).min_size(min_size))
+        //     .fixed_pos(pos_screen)
+        //     .collapsible(false)
+        //     .title_bar(false)
+        //     .auto_sized()
+        //     .constrain_to(egui::Rect::EVERYTHING)
+        //     .show(ui.ctx(), move |ui| {
+        //         // Ensure the ui is at least large enough to provide space for inputs/outputs.
+        //         let gap = egui::Vec2::splat(win_corner_radius * 2.0);
+        //         let min_size = min_size - gap;
+        //         ui.set_min_size(min_size);
+        //         // Set the user's content.
+        //         content(ui);
+        //     })
+        //     .expect("node windows are always open")
+        //     .response;
 
         // Update the stored data for this node and check for edge events.
         let mut edge_event = None;
@@ -365,23 +402,24 @@ impl Node {
                     selection_changed = gmem.selection.nodes.remove(&self.id);
                     selected = false;
                 }
-
-            // Check for edge creation / cancellation events.
-            } else if let Some(r) = ctx.socket_press_released {
-                if let Some(c) = gmem.closest_socket {
-                    if r.kind == c.kind && self.id == r.node {
-                        edge_event = Some(EdgeEvent::Cancelled);
-                    } else if self.id == c.node && primary_released(&ui.input(|i| i.clone())) {
-                        let kind = c.kind;
-                        let index = c.index;
-                        edge_event = Some(EdgeEvent::Ended { kind, index });
-                    }
-                } else if edge_event.is_none() {
-                    if self.id == r.node {
-                        edge_event = Some(EdgeEvent::Cancelled);
-                    }
-                }
             }
+            // FIXME:
+            // Check for edge creation / cancellation events.
+            // } else if let Some(r) = ctx.socket_press_released {
+            //     if let Some(c) = gmem.closest_socket {
+            //         if r.kind == c.kind && self.id == r.node {
+            //             edge_event = Some(EdgeEvent::Cancelled);
+            //         } else if self.id == c.node && primary_released(&ui.input(|i| i.clone())) {
+            //             let kind = c.kind;
+            //             let index = c.index;
+            //             edge_event = Some(EdgeEvent::Ended { kind, index });
+            //         }
+            //     } else if edge_event.is_none() {
+            //         if self.id == r.node {
+            //             edge_event = Some(EdgeEvent::Cancelled);
+            //         }
+            //     }
+            // }
         }
 
         if response.rect.min != pos_screen {
