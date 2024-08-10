@@ -28,6 +28,7 @@ impl Graph {
         self
     }
 
+    /// Begin showing the parts of the Graph.
     pub fn show(self, camera: &mut Camera, ui: &mut egui::Ui) -> Show {
         let (id, rect) = ui.allocate_space(ui.available_size());
         let response = ui.interact(rect, id, egui::Sense::click_and_drag());
@@ -75,31 +76,9 @@ impl Graph {
         }
 
         // Paint some subtle dots to check camera movement.
-        let half_size = rect.size() * 0.5;
-        let visible_rect =
-            egui::Rect::from_center_size((-camera.transform.translation).to_pos2(), rect.size());
-        let dot_step = ui.spacing().interact_size.y * camera.transform.scaling;
-        let vis = ui.style().noninteractive();
-        let x_dots =
-            (visible_rect.min.x / dot_step) as i32..=(visible_rect.max.x / dot_step) as i32;
-        let y_dots =
-            (visible_rect.min.y / dot_step) as i32..=(visible_rect.max.y / dot_step) as i32;
-        let x_start = half_size.x + camera.transform.translation.x;
-        let y_start = half_size.y + camera.transform.translation.y;
-        for x_dot in x_dots {
-            for y_dot in y_dots.clone() {
-                let x = x_start + x_dot as f32 * dot_step;
-                let y = y_start + y_dot as f32 * dot_step;
-                let r = egui::Rect::from_center_size([x, y].into(), [1.0; 2].into());
-                let color = vis.bg_stroke.color;
-                let stroke = egui::Stroke {
-                    width: 0.0,
-                    ..vis.bg_stroke
-                };
-                ui.painter().rect(r, 0.0, color, stroke);
-            }
-        }
+        debug_dot_grid(&rect, &camera, ui);
 
+        // NOTE: temporary test node.
         let id = egui::Area::new(id.with("subarea"))
             .default_pos(egui::Pos2::new(0.0, 0.0))
             // Need to cover up the pan_zoom demo window,
@@ -128,7 +107,31 @@ impl Graph {
     }
 }
 
-// fn dot_grid(
+/// Draw a dot grid to track camera movement.
+fn debug_dot_grid(rect: &egui::Rect, camera: &Camera, ui: &egui::Ui) {
+    let half_size = rect.size() * 0.5;
+    let visible_rect =
+        egui::Rect::from_center_size((-camera.transform.translation).to_pos2(), rect.size());
+    let dot_step = ui.spacing().interact_size.y * camera.transform.scaling;
+    let vis = ui.style().noninteractive();
+    let x_dots = (visible_rect.min.x / dot_step) as i32..=(visible_rect.max.x / dot_step) as i32;
+    let y_dots = (visible_rect.min.y / dot_step) as i32..=(visible_rect.max.y / dot_step) as i32;
+    let x_start = half_size.x + camera.transform.translation.x;
+    let y_start = half_size.y + camera.transform.translation.y;
+    for x_dot in x_dots {
+        for y_dot in y_dots.clone() {
+            let x = x_start + x_dot as f32 * dot_step;
+            let y = y_start + y_dot as f32 * dot_step;
+            let r = egui::Rect::from_center_size([x, y].into(), [1.0; 2].into());
+            let color = vis.bg_stroke.color;
+            let stroke = egui::Stroke {
+                width: 0.0,
+                ..vis.bg_stroke
+            };
+            ui.painter().rect(r, 0.0, color, stroke);
+        }
+    }
+}
 
 /// Combines the given id src with the `TypeId` of the `Graph` to produce a unique `egui::Id`.
 pub fn id(id_src: impl Hash) -> egui::Id {
