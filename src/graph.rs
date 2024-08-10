@@ -76,7 +76,7 @@ impl Graph {
         }
 
         // Paint some subtle dots to check camera movement.
-        debug_dot_grid(&rect, &camera, ui);
+        paint_dot_grid(&rect, &camera, ui);
 
         // NOTE: temporary test node.
         let id = egui::Area::new(id.with("subarea"))
@@ -92,7 +92,7 @@ impl Graph {
                     .stroke(ui.ctx().style().visuals.window_stroke)
                     .fill(ui.style().visuals.panel_fill)
                     .show(ui, |ui| {
-                        ui.style_mut().wrap = Some(false);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
                         // Node widget.
                         ui.label(format!("{:?}", camera));
@@ -108,7 +108,8 @@ impl Graph {
 }
 
 /// Draw a dot grid to track camera movement.
-fn debug_dot_grid(rect: &egui::Rect, camera: &Camera, ui: &egui::Ui) {
+// FIXME: Tracks panning, but dot grid skews when camera zooms.
+fn paint_dot_grid(rect: &egui::Rect, camera: &Camera, ui: &egui::Ui) {
     let half_size = rect.size() * 0.5;
     let visible_rect =
         egui::Rect::from_center_size((-camera.transform.translation).to_pos2(), rect.size());
@@ -118,6 +119,7 @@ fn debug_dot_grid(rect: &egui::Rect, camera: &Camera, ui: &egui::Ui) {
     let y_dots = (visible_rect.min.y / dot_step) as i32..=(visible_rect.max.y / dot_step) as i32;
     let x_start = half_size.x + camera.transform.translation.x;
     let y_start = half_size.y + camera.transform.translation.y;
+    let (x_start, y_start) = (0.0, 0.0);
     for x_dot in x_dots {
         for y_dot in y_dots.clone() {
             let x = x_start + x_dot as f32 * dot_step;
