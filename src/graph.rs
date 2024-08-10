@@ -50,8 +50,8 @@ impl Graph {
             // Note: doesn't catch zooming / panning if a button in this PanZoom container is hovered.
             if response.hovered() {
                 let pointer_in_layer = transform.inverse() * pointer;
-                let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
-                let pan_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+                let (zoom_delta, pan_delta) =
+                    ui.ctx().input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
 
                 // Zoom in on pointer:
                 camera.transform = camera.transform
@@ -76,13 +76,11 @@ impl Graph {
         }
 
         // Paint some subtle dots to check camera movement.
-        paint_dot_grid(&rect, &camera, ui);
+        dot_grid(id, rect, camera.transform, ui);
 
         // NOTE: temporary test node.
         let id = egui::Area::new(id.with("subarea"))
             .default_pos(egui::Pos2::new(0.0, 0.0))
-            // Need to cover up the pan_zoom demo window,
-            // but may also cover over other windows.
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
                 ui.set_clip_rect(transform.inverse() * rect);
@@ -107,32 +105,45 @@ impl Graph {
     }
 }
 
-/// Draw a dot grid to track camera movement.
-// FIXME: Tracks panning, but dot grid skews when camera zooms.
-fn paint_dot_grid(rect: &egui::Rect, camera: &Camera, ui: &egui::Ui) {
-    let half_size = rect.size() * 0.5;
-    let visible_rect =
-        egui::Rect::from_center_size((-camera.transform.translation).to_pos2(), rect.size());
-    let dot_step = ui.spacing().interact_size.y * camera.transform.scaling;
-    let vis = ui.style().noninteractive();
-    let x_dots = (visible_rect.min.x / dot_step) as i32..=(visible_rect.max.x / dot_step) as i32;
-    let y_dots = (visible_rect.min.y / dot_step) as i32..=(visible_rect.max.y / dot_step) as i32;
-    let x_start = half_size.x + camera.transform.translation.x;
-    let y_start = half_size.y + camera.transform.translation.y;
-    let (x_start, y_start) = (0.0, 0.0);
-    for x_dot in x_dots {
-        for y_dot in y_dots.clone() {
-            let x = x_start + x_dot as f32 * dot_step;
-            let y = y_start + y_dot as f32 * dot_step;
-            let r = egui::Rect::from_center_size([x, y].into(), [1.0; 2].into());
-            let color = vis.bg_stroke.color;
-            let stroke = egui::Stroke {
-                width: 0.0,
-                ..vis.bg_stroke
-            };
-            ui.painter().rect(r, 0.0, color, stroke);
-        }
-    }
+// Paint some subtle dots to make it easy to track camera movement with no nodes.
+// The given transform is the camera's transform used to transform the layer.
+fn dot_grid(graph_id: egui::Id, graph_rect: egui::Rect, transform: TSTransform, ui: &egui::Ui) {
+    let window_layer = ui.layer_id();
+    let id = egui::Area::new(graph_id.with("background"))
+        .default_pos(egui::Pos2::new(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            // Clip the view to the viewable area.
+            let clip_rect = transform.inverse() * graph_rect;
+            ui.set_clip_rect(clip_rect);
+
+            // Use the interaction size as a rough gap.
+            let dot_step = ui.spacing().interact_size.y;
+            let vis = ui.style().noninteractive();
+            let rect = graph_rect;
+            let x_dots = (rect.min.x / dot_step) as i32..=(rect.max.x / dot_step) as i32;
+            let y_dots = (rect.min.y / dot_step) as i32..=(rect.max.y / dot_step) as i32;
+            let x_start = (clip_rect.min.x / dot_step).floor() * dot_step;
+            let y_start = (clip_rect.min.y / dot_step).floor() * dot_step;
+
+            for x_dot in x_dots {
+                for y_dot in y_dots.clone() {
+                    let x = x_start + x_dot as f32 * dot_step;
+                    let y = y_start + y_dot as f32 * dot_step;
+                    let r = egui::Rect::from_center_size([x, y].into(), [1.0; 2].into());
+                    let color = vis.bg_stroke.color;
+                    let stroke = egui::Stroke {
+                        width: 0.0,
+                        ..vis.bg_stroke
+                    };
+                    ui.painter().rect(r, 0.0, color, stroke);
+                }
+            }
+        })
+        .response
+        .layer_id;
+    ui.ctx().set_transform_layer(id, transform);
+    ui.ctx().set_sublayer(window_layer, id);
 }
 
 /// Combines the given id src with the `TypeId` of the `Graph` to produce a unique `egui::Id`.
