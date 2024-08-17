@@ -331,15 +331,6 @@ impl Graph {
         //     });
         // }
 
-        // // Paint the background rect.
-        // if self.background {
-        //     paint_background(full_rect, ui);
-        // }
-
-        // // Paint some subtle dots to check camera movement.
-        // let visible_rect = egui::Rect::from_center_size(view.camera.pos(), full_rect.size());
-        // paint_grid_dots(&full_rect, &visible_rect, &view.camera, ui);
-
         // Draw the selection area if there is one.
         // TODO: Do this when `Show` is `drop`ped or finalised to draw over nodes, edges.
         if let Some(sel_rect) = selection_rect {
@@ -618,36 +609,6 @@ fn paint_background(full_rect: egui::Rect, ui: &mut egui::Ui) {
     ui.painter().rect(full_rect, 0.0, fill, stroke);
 }
 
-/// Given the graph area rect, the camera and `Ui`, paint some subtle dots to
-/// check camera movement.
-fn paint_grid_dots(
-    full_rect: &egui::Rect,
-    visible_rect: &egui::Rect,
-    cam: &Camera,
-    ui: &mut egui::Ui,
-) {
-    let dot_step = ui.spacing().interact_size.y;
-    let vis = ui.style().noninteractive();
-    let x_dots = (visible_rect.min.x / dot_step) as i32..=(visible_rect.max.x / dot_step) as i32;
-    let y_dots = (visible_rect.min.y / dot_step) as i32..=(visible_rect.max.y / dot_step) as i32;
-    let half_size = full_rect.size() * 0.5;
-    let x_start = half_size.x - cam.pos().x;
-    let y_start = half_size.y - cam.pos().y;
-    for x_dot in x_dots {
-        for y_dot in y_dots.clone() {
-            let x = x_start + x_dot as f32 * dot_step;
-            let y = y_start + y_dot as f32 * dot_step;
-            let r = egui::Rect::from_center_size([x, y].into(), [1.0; 2].into());
-            let color = vis.bg_stroke.color;
-            let stroke = egui::Stroke {
-                width: 0.0,
-                ..vis.bg_stroke
-            };
-            ui.painter().rect(r, 0.0, color, stroke);
-        }
-    }
-}
-
 // Paint some subtle dots to make it easy to track camera movement with no nodes.
 // The given transform is the camera's transform used to transform the layer.
 fn dot_grid(graph_id: egui::Id, graph_rect: egui::Rect, transform: TSTransform, ui: &egui::Ui) {
@@ -702,14 +663,14 @@ impl Camera {
     /// Convert the given point `pos` from graph space (position is relative to centre of
     /// graph) to screen space (where the point is currently visible within the UI).
     pub fn graph_to_screen(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
-        self.transform.inverse() * pos
+        self.transform * pos
         // graph_to_screen(self.pos(), graph_rect, pos)
     }
 
     /// Convert the given point `pos` from screen space (where the point is currently
     /// visible within the UI) to graph space (position is relative to centre of graph).
     pub fn screen_to_graph(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
-        self.transform * pos
+        self.transform.inverse() * pos
         // let transform = TSTransform::from_translation(ui.min_rect().left_top().to_vec2())
         //     * view.camera.transform;
         // screen_to_graph(self.pos(), graph_rect, pos)

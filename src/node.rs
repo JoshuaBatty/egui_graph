@@ -175,38 +175,6 @@ impl Node {
             ref camera,
         } = *view;
 
-        // The area for the the node on the graph.
-        let window_layer = ui.layer_id();
-        let mut response = egui::Area::new(self.id) // FIXME: Combine ID with graph ID.
-            .default_pos(egui::Pos2::new(0.0, 0.0))
-            .order(egui::Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                // Clip the node to the graph rect.
-                ui.set_clip_rect(camera.transform.inverse() * ctx.graph_rect);
-
-                // The frame for the widget.
-                egui::Frame::default()
-                    .rounding(egui::Rounding::same(4.0))
-                    .inner_margin(egui::Margin::same(8.0))
-                    .stroke(ui.ctx().style().visuals.window_stroke)
-                    .fill(ui.style().visuals.panel_fill)
-                    .show(ui, |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-
-                        // // Ensure the ui is at least large enough to provide space for inputs/outputs.
-                        // let gap = egui::Vec2::splat(win_corner_radius * 2.0);
-                        // let min_size = min_size - gap;
-                        // ui.set_min_size(min_size);
-
-                        // Node widget.
-                        content(ui);
-                    });
-            })
-            .response;
-        ui.ctx()
-            .set_transform_layer(response.layer_id, camera.transform);
-        ui.ctx().set_sublayer(window_layer, response.layer_id);
-
         //-----------------------------------------
 
         // Indicate that we've visited this node this update.
@@ -321,6 +289,41 @@ impl Node {
             frame.stroke = ui.visuals().selection.stroke;
             frame.stroke.color = color;
         }
+
+        // -----------------------------------------------------
+
+        // The area for the the node on the graph.
+        let window_layer = ui.layer_id();
+        let mut response = egui::Area::new(self.id) // FIXME: Combine ID with graph ID.
+            .default_pos(pos_screen)
+            // .fixed_pos(pos_screen)
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                // Clip the node to the graph rect.
+                ui.set_clip_rect(camera.transform.inverse() * ctx.graph_rect);
+
+                // The frame for the widget.
+                egui::Frame::default()
+                    .rounding(egui::Rounding::same(4.0))
+                    .inner_margin(egui::Margin::same(8.0))
+                    .stroke(ui.ctx().style().visuals.window_stroke)
+                    .fill(ui.style().visuals.panel_fill)
+                    .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
+                        // // Ensure the ui is at least large enough to provide space for inputs/outputs.
+                        // let gap = egui::Vec2::splat(win_corner_radius * 2.0);
+                        // let min_size = min_size - gap;
+                        // ui.set_min_size(min_size);
+
+                        // Node widget.
+                        content(ui);
+                    });
+            })
+            .response;
+        ui.ctx()
+            .set_transform_layer(response.layer_id, camera.transform);
+        ui.ctx().set_sublayer(window_layer, response.layer_id);
 
         // let mut response = egui::Window::new("")
         //     .id(self.id)
