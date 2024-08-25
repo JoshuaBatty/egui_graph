@@ -16,6 +16,7 @@ pub struct Node {
     socket_color: Option<egui::Color32>,
     max_width: Option<f32>,
     animation_time: f32,
+    collapsed: bool,
 }
 
 /// Describes either an input or output.
@@ -86,6 +87,7 @@ impl Node {
             flow: egui::Direction::LeftToRight,
             socket_radius: 3.0,
             animation_time: 0.1,
+            collapsed: false,
         }
     }
 
@@ -112,6 +114,11 @@ impl Node {
 
     pub fn outputs(mut self, n: usize) -> Self {
         self.outputs = n;
+        self
+    }
+
+    pub fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
         self
     }
 
@@ -222,10 +229,14 @@ impl Node {
         if max_sockets > 1 {
             match self.flow {
                 egui::Direction::LeftToRight | egui::Direction::RightToLeft => {
-                    min_size.y = min_size.y.max(min_len);
+                    if !self.collapsed {
+                        min_size.y = min_size.y.max(min_len);
+                    }
                 }
                 egui::Direction::TopDown | egui::Direction::BottomUp => {
-                    min_size.x = min_size.x.max(min_len);
+                    if !self.collapsed {
+                        min_size.x = min_size.x.max(min_len);
+                    }
                 }
             }
         }
