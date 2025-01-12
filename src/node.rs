@@ -494,20 +494,26 @@ impl Node {
             for ix in 0..self.inputs {
                 let p = in_pos;
                 if paint_highlight(SocketKind::Input, ix) {
-                    egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
-                        .circle_filled(p, hl_radius, color.linear_multiply(0.25));
+                    let hl_color = color.linear_multiply(0.25);
+                    ui.ctx()
+                        .layer_painter(ctx.graph_bg_layer)
+                        .circle_filled(p, hl_radius, hl_color);
                 }
-                egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
+                ui.ctx()
+                    .layer_painter(ctx.graph_bg_layer)
                     .circle_filled(p, radius, color);
                 in_pos += sockets.input.layout.step;
             }
             for ix in 0..self.outputs {
                 let p = out_pos;
                 if paint_highlight(SocketKind::Output, ix) {
-                    egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
-                        .circle_filled(p, hl_radius, color.linear_multiply(0.25));
+                    let hl_color = color.linear_multiply(0.25);
+                    ui.ctx()
+                        .layer_painter(ctx.graph_bg_layer)
+                        .circle_filled(p, hl_radius, hl_color);
                 }
-                egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
+                ui.ctx()
+                    .layer_painter(ctx.graph_bg_layer)
                     .circle_filled(p, radius, color);
                 out_pos += sockets.output.layout.step;
             }

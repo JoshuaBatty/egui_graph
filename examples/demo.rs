@@ -279,7 +279,8 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
         };
 
         // Draw the bezier curve
-        egui::Painter::new(ui.ctx().clone(), ectx.graph_bg_layer(), ui.clip_rect())
+        ui.ctx()
+            .layer_painter(ectx.graph_bg_layer())
             .add(egui::Shape::line(pts.clone(), wire_stroke));
     }
 
