@@ -25,6 +25,7 @@ struct State {
     wire_width: f32,
     wire_color: egui::Color32,
     auto_layout: bool,
+    first_frame: bool,
 }
 
 #[derive(Default)]
@@ -59,6 +60,7 @@ impl App {
         let ctx = &cc.egui_ctx;
         ctx.set_fonts(egui::FontDefinitions::default());
         let graph = new_graph();
+
         let state = State {
             graph,
             view: Default::default(),
@@ -69,6 +71,7 @@ impl App {
             wire_color: ctx.style().visuals.weak_text_color(),
             flow: egui::Direction::TopDown,
             auto_layout: true,
+            first_frame: true,
         };
         App { state }
     }
@@ -76,6 +79,13 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Move the camera to roughly centre the widgets on first frame.
+        if self.state.first_frame {
+            let rect = ctx.screen_rect();
+            self.state.view.camera.transform.translation.x += rect.width() * 0.2;
+            self.state.view.camera.transform.translation.y += rect.height() * 0.2;
+            self.state.first_frame = false;
+        }
         gui(ctx, &mut self.state);
         if self.state.auto_layout {
             self.state.view.layout = layout(&self.state.graph, self.state.flow, ctx);

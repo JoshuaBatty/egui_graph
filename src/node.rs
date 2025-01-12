@@ -298,9 +298,8 @@ impl Node {
         // TODO: Pass the actual graph layer in via nodectx to ensure its the graph? The user could
         // be using some subwindow in the graph thing that would mess this up.
         let mut node_response = egui::Area::new(self.id) // FIXME: Combine ID with graph ID.
-            .default_pos(pos_screen)
-            // .fixed_pos(pos_screen)
-            .order(egui::Order::Foreground)
+            .current_pos(pos_graph)
+            .order(egui::Order::Foreground) // FIXME: Temporary until node layout working
             .show(ui.ctx(), |ui| {
                 // Clip the node to the graph rect.
                 ui.set_clip_rect(camera.transform.inverse() * ctx.graph_rect);
@@ -323,6 +322,11 @@ impl Node {
         let node_layer = node_response.layer_id;
         ui.ctx().set_transform_layer(node_layer, camera.transform);
         ui.ctx().set_sublayer(ctx.graph_layer, node_layer);
+
+        if node_response.dragged() {
+            *target_pos_graph = node_response.rect.min;
+            // TODO: If multiple nodes selected, drag them all here?
+        }
 
         // let mut response = egui::Window::new("")
         //     .id(self.id)
@@ -424,10 +428,10 @@ impl Node {
             // }
         }
 
-        if node_response.rect.min != pos_screen {
-            *target_pos_graph += node_response.rect.min - pos_screen;
-            node_response.mark_changed();
-        }
+        // if node_response.rect.min != pos_screen {
+        //     *target_pos_graph += node_response.rect.min - pos_screen;
+        //     node_response.mark_changed();
+        // }
 
         // The inlets/outlets.
         if self.inputs > 0 || self.outputs > 0 {
