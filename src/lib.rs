@@ -7,7 +7,6 @@ use egui::emath::TSTransform;
 pub use layout::layout;
 
 pub mod bezier;
-pub mod graph;
 #[cfg(feature = "layout")]
 pub mod layout;
 pub mod node;
