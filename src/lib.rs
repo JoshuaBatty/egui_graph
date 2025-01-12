@@ -124,6 +124,10 @@ pub struct Show<'a> {
     graph_id: egui::Id,
     /// The rect allocated in the UI for the graph.
     graph_rect: egui::Rect,
+    /// The layer of the rect allocated for the graph.
+    graph_layer: egui::LayerId,
+    /// The layer of the background response returned from the dot grid.
+    graph_bg_layer: egui::LayerId,
     /// Track all nodes that were visited this update.
     ///
     /// We will use this to remove old node state on `drop`.
@@ -169,6 +173,8 @@ struct SocketLayout {
 pub struct NodesCtx<'a> {
     graph_id: egui::Id,
     graph_rect: egui::Rect,
+    graph_layer: egui::LayerId,
+    graph_bg_layer: egui::LayerId,
     visited: &'a mut HashSet<egui::Id>,
     // full_rect: egui::Rect,
     // selection_rect: Option<egui::Rect>,
@@ -179,6 +185,7 @@ pub struct NodesCtx<'a> {
 /// A context to assist with the instantiation of edge widgets.
 pub struct EdgesCtx {
     graph_id: egui::Id,
+    graph_bg_layer: egui::LayerId,
     graph_rect: egui::Rect,
     // visible_rect: egui::Rect,
 }
@@ -251,7 +258,7 @@ impl Graph {
         }
 
         // Paint some subtle dots to check camera movement.
-        dot_grid(id, graph_rect, view.camera.transform, ui);
+        let bg_response = dot_grid(id, graph_rect, view.camera.transform, ui);
 
         // ------------------
 
@@ -343,6 +350,8 @@ impl Graph {
         Show {
             graph_id: self.id,
             graph_rect,
+            graph_layer: response.layer_id,
+            graph_bg_layer: bg_response.layer_id,
             visited: Default::default(),
             ui,
             // full_rect,
@@ -610,9 +619,14 @@ fn paint_background(full_rect: egui::Rect, ui: &mut egui::Ui) {
 
 // Paint some subtle dots to make it easy to track camera movement with no nodes.
 // The given transform is the camera's transform used to transform the layer.
-fn dot_grid(graph_id: egui::Id, graph_rect: egui::Rect, transform: TSTransform, ui: &egui::Ui) {
-    let window_layer = ui.layer_id();
-    let id = egui::Area::new(graph_id.with("background"))
+fn dot_grid(
+    graph_id: egui::Id,
+    graph_rect: egui::Rect,
+    transform: TSTransform,
+    ui: &egui::Ui,
+) -> egui::Response {
+    let graph_layer = ui.layer_id();
+    let response = egui::Area::new(graph_id.with("background"))
         .default_pos(egui::Pos2::new(0.0, 0.0))
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
@@ -643,10 +657,11 @@ fn dot_grid(graph_id: egui::Id, graph_rect: egui::Rect, transform: TSTransform, 
                 }
             }
         })
-        .response
-        .layer_id;
-    ui.ctx().set_transform_layer(id, transform);
-    ui.ctx().set_sublayer(window_layer, id);
+        .response;
+    let graph_bg_layer = response.layer_id;
+    ui.ctx().set_transform_layer(graph_bg_layer, transform);
+    ui.ctx().set_sublayer(graph_layer, graph_bg_layer);
+    response
 }
 
 /// Paint the selection area rectangle.
@@ -735,6 +750,8 @@ impl<'ui> Show<'ui> {
             let Self {
                 graph_id,
                 graph_rect,
+                graph_layer,
+                graph_bg_layer,
                 ref mut visited,
                 ref mut ui,
                 ..
@@ -742,6 +759,8 @@ impl<'ui> Show<'ui> {
             let mut ctx = NodesCtx {
                 graph_id,
                 graph_rect,
+                graph_layer,
+                graph_bg_layer,
                 visited,
                 // selection_rect,
                 // select,
@@ -758,6 +777,7 @@ impl<'ui> Show<'ui> {
             let Self {
                 graph_id,
                 graph_rect,
+                graph_bg_layer,
                 ref mut ui,
                 // visible_rect,
                 ..
@@ -765,6 +785,7 @@ impl<'ui> Show<'ui> {
             let mut ctx = EdgesCtx {
                 graph_id,
                 graph_rect,
+                graph_bg_layer,
                 // visible_rect,
             };
             content(&mut ctx, ui);
@@ -886,6 +907,13 @@ impl EdgesCtx {
     /// The full rect occuppied by the graph widget.
     pub fn graph_rect(&self) -> egui::Rect {
         self.graph_rect
+    }
+
+    /// The layer of the background response returned from the dot grid.
+    ///
+    /// Edges should be painted on this layer to inherit the correct transform.
+    pub fn graph_bg_layer(&self) -> egui::LayerId {
+        self.graph_bg_layer
     }
 }
 

@@ -293,8 +293,9 @@ impl Node {
         // -----------------------------------------------------
 
         // The area for the the node on the graph.
-        let window_layer = ui.layer_id();
-        let mut response = egui::Area::new(self.id) // FIXME: Combine ID with graph ID.
+        // TODO: Pass the actual graph layer in via nodectx to ensure its the graph? The user could
+        // be using some subwindow in the graph thing that would mess this up.
+        let mut node_response = egui::Area::new(self.id) // FIXME: Combine ID with graph ID.
             .default_pos(pos_screen)
             // .fixed_pos(pos_screen)
             .order(egui::Order::Foreground)
@@ -321,9 +322,9 @@ impl Node {
                     });
             })
             .response;
-        ui.ctx()
-            .set_transform_layer(response.layer_id, camera.transform);
-        ui.ctx().set_sublayer(window_layer, response.layer_id);
+        let node_layer = node_response.layer_id;
+        ui.ctx().set_transform_layer(node_layer, camera.transform);
+        ui.ctx().set_sublayer(ctx.graph_layer, node_layer);
 
         // let mut response = egui::Window::new("")
         //     .id(self.id)
@@ -357,13 +358,13 @@ impl Node {
         {
             let gmem_arc = crate::memory(ui, ctx.graph_id);
             let mut gmem = gmem_arc.lock().expect("failed to lock graph temp memory");
-            gmem.node_sizes.insert(self.id, response.rect.size());
+            gmem.node_sizes.insert(self.id, node_response.rect.size());
 
             let ctrl_down = ui.input(|i| i.modifiers.ctrl);
 
             // If the window is pressed, select the node.
             let pointer = &ui.input(|i| i.pointer.clone());
-            if response.is_pointer_button_down_on() && primary_pressed(pointer) {
+            if node_response.is_pointer_button_down_on() && primary_pressed(pointer) {
                 // If ctrl is down, check for deselection.
                 if ctrl_down && gmem.selection.nodes.contains(&self.id) {
                     selection_changed = gmem.selection.nodes.remove(&self.id);
@@ -382,7 +383,7 @@ impl Node {
                 }
 
             // If the primary button was pressed, check for edge events.
-            } else if !response.is_pointer_button_down_on() && primary_pressed(pointer) {
+            } else if !node_response.is_pointer_button_down_on() && primary_pressed(pointer) {
                 // If this node's socket was pressed, create a start event.
                 if let Some(ref pressed) = gmem.pressed {
                     if let crate::PressAction::Socket(socket) = pressed.action {
@@ -425,9 +426,9 @@ impl Node {
             // }
         }
 
-        if response.rect.min != pos_screen {
-            *target_pos_graph += response.rect.min - pos_screen;
-            response.mark_changed();
+        if node_response.rect.min != pos_screen {
+            *target_pos_graph += node_response.rect.min - pos_screen;
+            node_response.mark_changed();
         }
 
         // The inlets/outlets.
@@ -437,7 +438,7 @@ impl Node {
                 self.inputs,
                 self.outputs,
                 socket_padding,
-                response.rect,
+                node_response.rect,
                 self.flow,
             );
             let gmem_arc = crate::memory(ui, ctx.graph_id);
@@ -486,25 +487,28 @@ impl Node {
             };
 
             let color = self.socket_color.unwrap_or(ui.visuals().text_color());
-            let hl_size = (self.socket_radius + 4.0).max(4.0);
             let mut in_pos = sockets.input.layout.start;
             let mut out_pos = sockets.output.layout.start;
+            let radius = self.socket_radius;
+            let hl_radius = (self.socket_radius + 4.0).max(4.0);
             for ix in 0..self.inputs {
+                let p = in_pos;
                 if paint_highlight(SocketKind::Input, ix) {
-                    ui.painter()
-                        .circle_filled(in_pos, hl_size, color.linear_multiply(0.25));
+                    egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
+                        .circle_filled(p, hl_radius, color.linear_multiply(0.25));
                 }
-                ui.painter()
-                    .circle_filled(in_pos, self.socket_radius, color);
+                egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
+                    .circle_filled(p, radius, color);
                 in_pos += sockets.input.layout.step;
             }
             for ix in 0..self.outputs {
+                let p = out_pos;
                 if paint_highlight(SocketKind::Output, ix) {
-                    ui.painter()
-                        .circle_filled(out_pos, hl_size, color.linear_multiply(0.25));
+                    egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
+                        .circle_filled(p, hl_radius, color.linear_multiply(0.25));
                 }
-                ui.painter()
-                    .circle_filled(out_pos, self.socket_radius, color);
+                egui::Painter::new(ui.ctx().clone(), ctx.graph_bg_layer, ui.clip_rect())
+                    .circle_filled(p, radius, color);
                 out_pos += sockets.output.layout.step;
             }
         }
@@ -524,11 +528,11 @@ impl Node {
         };
 
         if selection_changed || removed || edge_event.is_some() {
-            response.mark_changed();
+            node_response.mark_changed();
         }
 
         NodeResponse {
-            response,
+            response: node_response,
             selection_changed,
             selected,
             removed,
