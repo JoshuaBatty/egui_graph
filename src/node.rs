@@ -248,33 +248,35 @@ impl Node {
             let gmem_arc = crate::memory(ui, ctx.graph_id);
             let mut gmem = gmem_arc.lock().expect("failed to lock graph temp memory");
 
-            // FIXME
-            let in_selection_rect = false;
-            // let in_selection_rect = match ctx.selection_rect {
-            //     None => false,
-            //     Some(sel_rect) => {
-            //         let size = gmem
-            //             .node_sizes
-            //             .get(&self.id)
-            //             .cloned()
-            //             .unwrap_or(egui::Vec2::ZERO);
-            //         let rect = egui::Rect::from_min_size(pos_screen, size);
-            //         sel_rect.intersects(rect)
-            //     }
-            // };
+            let in_selection_rect = match ctx.selection_rect {
+                None => false,
+                Some(sel_rect) => {
+                    let size = gmem
+                        .node_sizes
+                        .get(&self.id)
+                        .cloned()
+                        .unwrap_or(egui::Vec2::ZERO);
 
-            // // Update the selection if the primary mouse button was just released.
-            // if ctx.select {
-            //     if in_selection_rect {
-            //         if gmem.selection.nodes.insert(self.id) {
-            //             selection_changed = true;
-            //         }
-            //     } else if !ui.input(|i| i.modifiers.ctrl) {
-            //         if gmem.selection.nodes.remove(&self.id) {
-            //             selection_changed = true;
-            //         }
-            //     }
-            // }
+                    // let pos = camera.screen_to_graph(ctx.graph_rect, pos_screen);
+                    // let size = camera.transform.scaling * size;
+
+                    let rect = egui::Rect::from_min_size(pos_screen, size);
+                    sel_rect.intersects(rect)
+                }
+            };
+
+            // Update the selection if the primary mouse button was just released.
+            if ctx.select {
+                if in_selection_rect {
+                    if gmem.selection.nodes.insert(self.id) {
+                        selection_changed = true;
+                    }
+                } else if !ui.input(|i| i.modifiers.ctrl) {
+                    if gmem.selection.nodes.remove(&self.id) {
+                        selection_changed = true;
+                    }
+                }
+            }
 
             let selected = gmem.selection.nodes.contains(&self.id);
 
@@ -304,11 +306,7 @@ impl Node {
                 ui.set_clip_rect(camera.transform.inverse() * ctx.graph_rect);
 
                 // The frame for the widget.
-                egui::Frame::default()
-                    .rounding(egui::Rounding::same(4.0))
-                    .inner_margin(egui::Margin::same(8.0))
-                    .stroke(ui.ctx().style().visuals.window_stroke)
-                    .fill(ui.style().visuals.panel_fill)
+                frame
                     .show(ui, |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 

@@ -132,6 +132,10 @@ pub struct Show<'a> {
     ///
     /// We will use this to remove old node state on `drop`.
     visited: HashSet<egui::Id>,
+    /// Selection rectangle in normal, untransformed UI space.
+    selection_rect: Option<egui::Rect>,
+    /// Indicates if the mouse press was released to perform a selection.
+    select: bool,
     /// The child UI of the `Graph` widget for instantiating nodes and edges.
     ui: &'a mut egui::Ui,
 }
@@ -176,10 +180,10 @@ pub struct NodesCtx<'a> {
     graph_layer: egui::LayerId,
     graph_bg_layer: egui::LayerId,
     visited: &'a mut HashSet<egui::Id>,
-    // full_rect: egui::Rect,
-    // selection_rect: Option<egui::Rect>,
-    // select: bool,
+    selection_rect: Option<egui::Rect>,
+    select: bool,
     // socket_press_released: Option<node::Socket>,
+    // full_rect: egui::Rect,
 }
 
 /// A context to assist with the instantiation of edge widgets.
@@ -351,11 +355,11 @@ impl Graph {
             graph_layer: response.layer_id,
             graph_bg_layer: bg_response.layer_id,
             visited: Default::default(),
+            selection_rect,
+            select,
             ui,
             // full_rect,
             // visible_rect,
-            // selection_rect,
-            // select,
             // socket_press_released,
         }
     }
@@ -748,6 +752,8 @@ impl<'ui> Show<'ui> {
                 graph_bg_layer,
                 ref mut visited,
                 ref mut ui,
+                selection_rect,
+                select,
                 ..
             } = self;
             let mut ctx = NodesCtx {
@@ -756,8 +762,8 @@ impl<'ui> Show<'ui> {
                 graph_layer,
                 graph_bg_layer,
                 visited,
-                // selection_rect,
-                // select,
+                selection_rect,
+                select,
                 // socket_press_released,
             };
             content(&mut ctx, ui);
