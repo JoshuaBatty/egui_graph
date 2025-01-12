@@ -270,8 +270,7 @@ impl Graph {
         let mut select = false;
         let mut socket_press_released = None;
 
-        let ptr_in_use = ui.ctx().is_using_pointer();
-        let ptr_on_graph = ui.rect_contains_pointer(full_rect);
+        let ptr_on_graph = response.contains_pointer();
 
         // Check for selection rectangle and node dragging.
         let gmem_arc = memory(ui, self.id);
@@ -296,7 +295,6 @@ impl Graph {
                 &*view,
                 &pointer,
                 closest_socket,
-                ptr_in_use,
                 ptr_on_graph,
                 ptr_screen,
                 ptr_graph,
@@ -371,7 +369,6 @@ fn graph_interaction(
     view: &View,
     pointer: &egui::PointerState,
     closest_socket: Option<node::Socket>,
-    ptr_in_use: bool,
     ptr_on_graph: bool,
     ptr_screen: egui::Pos2,
     ptr_graph: egui::Pos2,
@@ -419,8 +416,7 @@ fn graph_interaction(
             })
         }
     // Check for the beginning of a socket press or rectangular selection.
-    } else if !ptr_in_use
-        && ptr_on_graph
+    } else if ptr_on_graph
         && pointer.button_down(egui::PointerButton::Primary)
         && pointer.any_pressed()
     {
@@ -444,8 +440,7 @@ fn graph_interaction(
         Some(pressed)
 
     // Otherwise, check if we should start dragging nodes.
-    } else if !ptr_in_use
-        && full_rect.contains(ptr_screen)
+    } else if full_rect.contains(ptr_screen)
         && pointer.button_down(egui::PointerButton::Primary)
         && pointer.any_pressed()
     {
@@ -628,7 +623,6 @@ fn dot_grid(
     let graph_layer = ui.layer_id();
     let response = egui::Area::new(graph_id.with("background"))
         .default_pos(egui::Pos2::new(0.0, 0.0))
-        .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
             // Clip the view to the viewable area.
             let clip_rect = transform.inverse() * graph_rect;
