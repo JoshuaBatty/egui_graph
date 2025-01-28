@@ -479,6 +479,7 @@ fn graph_interaction(
         pressed.cloned()
     };
 
+    println!("selection_rect: {:?}", selection_rect);
     GraphInteraction {
         pressed,
         socket_press_released,

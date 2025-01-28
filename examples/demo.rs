@@ -97,17 +97,17 @@ fn new_graph() -> Graph {
     // The graph we want to inspect/edit.
     let mut graph = Graph::new();
     let a = graph.add_node(node("Foo", NodeKind::Label));
-    let b = graph.add_node(node("Bar", NodeKind::Button));
-    let c = graph.add_node(node("Baz", NodeKind::Slider(0.5)));
-    let d = graph.add_node(node("Qux", NodeKind::DragValue(20.0)));
-    let comment = "Nodes are a thin wrapper around the `egui::Window`, \
-        allowing you to set arbitrary widgets.";
-    let e = graph.add_node(node("Fiz", NodeKind::Comment(comment.to_string())));
-    graph.add_edge(a, c, (0, 0));
-    graph.add_edge(a, d, (1, 1));
-    graph.add_edge(b, d, (0, 2));
-    graph.add_edge(c, d, (0, 0));
-    graph.add_edge(d, e, (0, 0));
+    // let b = graph.add_node(node("Bar", NodeKind::Button));
+    // let c = graph.add_node(node("Baz", NodeKind::Slider(0.5)));
+    // let d = graph.add_node(node("Qux", NodeKind::DragValue(20.0)));
+    // let comment = "Nodes are a thin wrapper around the `egui::Window`, \
+    //     allowing you to set arbitrary widgets.";
+    // let e = graph.add_node(node("Fiz", NodeKind::Comment(comment.to_string())));
+    // graph.add_edge(a, c, (0, 0));
+    // graph.add_edge(a, d, (1, 1));
+    // graph.add_edge(b, d, (0, 2));
+    // graph.add_edge(c, d, (0, 0));
+    // graph.add_edge(d, e, (0, 0));
     graph
 }
 
