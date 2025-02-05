@@ -84,7 +84,7 @@ enum PressAction {
         node: Option<PressedNode>,
     },
     /// The graph was pressed and we are performing a selection.
-    Select,
+    Select { screen_origin: egui::Pos2 },
     /// A node's socket was pressed in order to start creating a connection.
     Socket(node::Socket),
 }
@@ -397,10 +397,8 @@ fn graph_interaction(
                     drag_nodes_delta = target - *current;
                 }
             }
-            PressAction::Select => {
-                let min = view.camera.graph_to_screen(full_rect, pressed.origin_pos);
-                let max = ptr_screen;
-                selection_rect = Some(egui::Rect::from_two_pos(min, max));
+            PressAction::Select { screen_origin } => {
+                selection_rect = Some(egui::Rect::from_two_pos(screen_origin, ptr_screen));
             }
             _ => (),
         }
@@ -408,7 +406,7 @@ fn graph_interaction(
         // The press action has ended.
         if pointer.any_released() && !pointer.button_down(egui::PointerButton::Primary) {
             match pressed.action {
-                PressAction::Select => select = true,
+                PressAction::Select {..} => select = true,
                 PressAction::Socket(socket) => socket_press_released = Some(socket),
                 _ => (),
             }
@@ -431,7 +429,7 @@ fn graph_interaction(
                 let min = ptr_screen;
                 let max = ptr_screen;
                 selection_rect = Some(egui::Rect::from_two_pos(min, max));
-                PressAction::Select
+                PressAction::Select { screen_origin: ptr_screen }
             }
         };
 
@@ -673,21 +671,35 @@ fn paint_selection_area(sel_rect: egui::Rect, ui: &mut egui::Ui) {
 }
 
 impl Camera {
-    /// Convert the given point `pos` from graph space (position is relative to centre of
-    /// graph) to screen space (where the point is currently visible within the UI).
     pub fn graph_to_screen(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
-        self.transform * pos
-        // graph_to_screen(self.pos(), graph_rect, pos)
+        // First apply camera transform (zoom and pan)
+        let transformed = self.transform * pos;
+        // Then offset by graph position in screen space
+        transformed + graph_rect.min.to_vec2()
     }
 
-    /// Convert the given point `pos` from screen space (where the point is currently
-    /// visible within the UI) to graph space (position is relative to centre of graph).
     pub fn screen_to_graph(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
-        self.transform.inverse() * pos
-        // let transform = TSTransform::from_translation(ui.min_rect().left_top().to_vec2())
-        //     * view.camera.transform;
-        // screen_to_graph(self.pos(), graph_rect, pos)
+        // First undo graph position offset
+        let pos_in_graph = pos - graph_rect.min.to_vec2();
+        // Then undo camera transform (zoom and pan)
+        self.transform.inverse() * pos_in_graph
     }
+
+    // /// Convert the given point `pos` from graph space (position is relative to centre of
+    // /// graph) to screen space (where the point is currently visible within the UI).
+    // pub fn graph_to_screen(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
+    //     self.transform * pos
+    //     // graph_to_screen(self.pos(), graph_rect, pos)
+    // }
+
+    // /// Convert the given point `pos` from screen space (where the point is currently
+    // /// visible within the UI) to graph space (position is relative to centre of graph).
+    // pub fn screen_to_graph(&self, graph_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
+    //     self.transform.inverse() * pos
+    //     // let transform = TSTransform::from_translation(ui.min_rect().left_top().to_vec2())
+    //     //     * view.camera.transform;
+    //     // screen_to_graph(self.pos(), graph_rect, pos)
+    // }
 
     // FIXME: Remove this - just added temporarily to minimize breakage while
     // switching camera to transform.

@@ -82,8 +82,8 @@ impl eframe::App for App {
         // Move the camera to roughly centre the widgets on first frame.
         if self.state.first_frame {
             let rect = ctx.screen_rect();
-            self.state.view.camera.transform.translation.x += rect.width() * 0.2;
-            self.state.view.camera.transform.translation.y += rect.height() * 0.2;
+            self.state.view.camera.transform.translation.x += rect.width() * 0.42;
+            self.state.view.camera.transform.translation.y += rect.height() * 0.42;
             self.state.first_frame = false;
         }
         gui(ctx, &mut self.state);
@@ -97,17 +97,18 @@ fn new_graph() -> Graph {
     // The graph we want to inspect/edit.
     let mut graph = Graph::new();
     let a = graph.add_node(node("Foo", NodeKind::Label));
-    // let b = graph.add_node(node("Bar", NodeKind::Button));
-    // let c = graph.add_node(node("Baz", NodeKind::Slider(0.5)));
-    // let d = graph.add_node(node("Qux", NodeKind::DragValue(20.0)));
-    // let comment = "Nodes are a thin wrapper around the `egui::Window`, \
-    //     allowing you to set arbitrary widgets.";
-    // let e = graph.add_node(node("Fiz", NodeKind::Comment(comment.to_string())));
-    // graph.add_edge(a, c, (0, 0));
-    // graph.add_edge(a, d, (1, 1));
-    // graph.add_edge(b, d, (0, 2));
-    // graph.add_edge(c, d, (0, 0));
-    // graph.add_edge(d, e, (0, 0));
+    let b = graph.add_node(node("Bar", NodeKind::Button));
+    let c = graph.add_node(node("Baz", NodeKind::Slider(0.5)));
+    let d = graph.add_node(node("Qux", NodeKind::DragValue(20.0)));
+    let comment = "Nodes are a thin wrapper around the `egui::Window`, \
+        allowing you to set arbitrary widgets.";
+    let e = graph.add_node(node("Fiz", NodeKind::Comment(comment.to_string())));
+    graph.add_edge(a, c, (0, 0));
+    graph.add_edge(a, d, (1, 1));
+    graph.add_edge(b, d, (0, 2));
+    graph.add_edge(c, d, (0, 0));
+    graph.add_edge(d, e, (0, 0));
+    
     graph
 }
 
@@ -120,17 +121,31 @@ fn layout(graph: &Graph, flow: egui::Direction, ctx: &egui::Context) -> egui_gra
     ctx.memory(|m| {
         let nodes = graph.node_indices().map(|n| {
             let id = egui::Id::new(n);
-            let size = m
-                .area_rect(id)
-                .map(|a| a.size())
-                .unwrap_or([200.0, 50.0].into());
+            // let size = m
+            //     .area_rect(id)
+            //     .map(|a| a.size())
+            //     .unwrap_or([200.0, 50.0].into());
+            
+            // For layout: just pick a default or stored size.
+            // but DON'T call m.area_rect(id):
+            let size = egui::Vec2::new(0.0, 0.0);
+            //let size = m.area_rect(id).map(|a| a.size()).unwrap_or(egui::Vec2::new(0.0, 0.0));
+
+
             (id, size)
         });
         let edges = graph
             .edge_indices()
             .filter_map(|e| graph.edge_endpoints(e))
             .map(|(a, b)| (egui::Id::new(a), egui::Id::new(b)));
-        egui_graph::layout(nodes, edges, flow)
+        let mut layout = egui_graph::layout(nodes, edges, flow);
+        // Apply custom offset spacing to the layout
+        for pos in layout.values_mut() {
+            pos.x *= 3.0;
+            pos.y *= 1.0;
+        }
+        eprintln!("layout: {:?}", layout);
+        layout
     })
 }
 

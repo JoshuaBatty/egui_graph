@@ -1,4 +1,5 @@
 use crate::{NodeSockets, NodesCtx, SocketLayout};
+use egui::emath::TSTransform;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 
@@ -86,7 +87,7 @@ impl Node {
             outputs: 0,
             flow: egui::Direction::LeftToRight,
             socket_radius: 3.0,
-            animation_time: 0.1,
+            animation_time: 0.0,
         }
     }
 
@@ -194,18 +195,22 @@ impl Node {
             egui::Pos2::new(pos.x, pos.y)
         });
 
+        // AHA the above block isn't being called because layout.entry(self.id) returns a value here. 
+        // lets check where and when these values are first being set! 
+        eprintln!("target_pos_graph: {:?}", target_pos_graph);
+
         // Interpolate toward the desired position over time for auto-layout.
         let pos_graph = {
             let ctx = ui.ctx();
             let idx = self.id.with("x");
             let idy = self.id.with("y");
             let x = ctx.animate_value_with_time(idx, target_pos_graph.x, self.animation_time);
-            let y = ctx.animate_value_with_time(idy, target_pos_graph.y, self.animation_time);
+            let y = ctx.animate_value_with_time(idy, target_pos_graph.y, self.animation_time) ;
             egui::Pos2::new(x, y)
         };
 
         // Translate the graph position to a position within the UI.
-        let pos_screen = camera.graph_to_screen(ctx.graph_rect, pos_graph);
+        //let pos_screen = camera.graph_to_screen(ctx.graph_rect, pos_graph);
 
         // The window should always be at least the interaction size.
         let min_item_spacing = ui.spacing().item_spacing.x.min(ui.spacing().item_spacing.y);
@@ -248,20 +253,58 @@ impl Node {
             let gmem_arc = crate::memory(ui, ctx.graph_id);
             let mut gmem = gmem_arc.lock().expect("failed to lock graph temp memory");
 
+            // let in_selection_rect = match ctx.selection_rect {
+            //     None => false,
+            //     Some(sel_rect) => {
+            //         let size = gmem
+            //             .node_sizes
+            //             .get(&self.id)
+            //             .cloned()
+            //             .unwrap_or(egui::Vec2::ZERO);
+
+            //         // let pos = camera.screen_to_graph(ctx.graph_rect, pos_screen);
+            //         // let size = camera.transform.scaling * size;
+
+            //         let rect = egui::Rect::from_min_size(pos_screen, size);
+            //         sel_rect.intersects(rect)
+            //     }
+            // };
+
+
             let in_selection_rect = match ctx.selection_rect {
                 None => false,
-                Some(sel_rect) => {
+                Some(sel_rect_screen) => {
                     let size = gmem
                         .node_sizes
                         .get(&self.id)
                         .cloned()
                         .unwrap_or(egui::Vec2::ZERO);
+            
+                    // // The node’s bounding box in *graph* coords:
+                    // let node_rect_graph = egui::Rect::from_min_size(pos_graph, size);
 
-                    // let pos = camera.screen_to_graph(ctx.graph_rect, pos_screen);
-                    // let size = camera.transform.scaling * size;
+                    // // Convert it to final on‐screen coords using the same transform as the layer:
+                    // let node_rect_screen = final_transform.mul_rect(node_rect_graph);
 
-                    let rect = egui::Rect::from_min_size(pos_screen, size);
-                    sel_rect.intersects(rect)
+                    // Convert the node’s graph-space position to screen space:
+                    let pos_screen = camera.graph_to_screen(ctx.graph_rect, pos_graph);
+                    // Scale the node’s size by the camera’s zoom:
+                    let node_size_screen = size * camera.transform.scaling;
+
+                    // Build the final on-screen rectangle.
+                    let node_rect_screen = egui::Rect::from_min_size(pos_screen, node_size_screen);
+
+
+                    let painter = ui.ctx().layer_painter(ctx.graph_layer);
+                    painter.rect_stroke(node_rect_screen, 0.0, egui::Stroke::new(2.0, egui::Color32::LIGHT_BLUE));
+                    painter.rect_stroke(sel_rect_screen, 0.0, egui::Stroke::new(2.0, egui::Color32::RED));
+            
+                    println!("Debug positions:");
+                    println!("  pos_screen: {:?}", pos_screen);
+                    println!("  node_rect: {:?}", node_rect_screen);
+                    println!("  sel_rect: {:?}", sel_rect_screen);
+            
+                    sel_rect_screen.intersects(node_rect_screen)
                 }
             };
 
@@ -320,6 +363,8 @@ impl Node {
             })
             .response;
         let node_layer = node_response.layer_id;
+        
+        // Combine the graph_rect offset and the camera transform into one final transform:
         ui.ctx().set_transform_layer(node_layer, camera.transform);
         ui.ctx().set_sublayer(ctx.graph_layer, node_layer);
 
