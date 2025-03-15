@@ -197,7 +197,7 @@ impl Node {
 
         // AHA the above block isn't being called because layout.entry(self.id) returns a value here. 
         // lets check where and when these values are first being set! 
-        eprintln!("target_pos_graph: {:?}", target_pos_graph);
+        //eprintln!("target_pos_graph: {:?}", target_pos_graph);
 
         // Interpolate toward the desired position over time for auto-layout.
         let pos_graph = {
@@ -299,10 +299,10 @@ impl Node {
                     painter.rect_stroke(node_rect_screen, 0.0, egui::Stroke::new(2.0, egui::Color32::LIGHT_BLUE));
                     painter.rect_stroke(sel_rect_screen, 0.0, egui::Stroke::new(2.0, egui::Color32::RED));
             
-                    println!("Debug positions:");
-                    println!("  pos_screen: {:?}", pos_screen);
-                    println!("  node_rect: {:?}", node_rect_screen);
-                    println!("  sel_rect: {:?}", sel_rect_screen);
+                    // println!("Debug positions:");
+                    // println!("  pos_screen: {:?}", pos_screen);
+                    // println!("  node_rect: {:?}", node_rect_screen);
+                    // println!("  sel_rect: {:?}", sel_rect_screen);
             
                     sel_rect_screen.intersects(node_rect_screen)
                 }
@@ -369,6 +369,7 @@ impl Node {
         ui.ctx().set_sublayer(ctx.graph_layer, node_layer);
 
         if node_response.dragged() {
+            eprintln!("Dragged! | {:?}", node_response.rect.min);
             *target_pos_graph = node_response.rect.min;
             // TODO: If multiple nodes selected, drag them all here?
         }
