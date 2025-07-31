@@ -25,6 +25,7 @@ struct State {
     custom_edge_style: bool,
     edge_width: f32,
     edge_color: egui::Color32,
+    edge_curvature: f32,
     auto_layout: bool,
     node_spacing: [f32; 2],
     node_id_map: HashMap<egui::Id, NodeIndex>,
@@ -49,6 +50,7 @@ type Graph = petgraph::stable_graph::StableGraph<Node, (usize, usize)>;
 struct Node {
     name: String,
     kind: NodeKind,
+    collapsed: bool,
 }
 
 enum NodeKind {
@@ -72,6 +74,7 @@ impl App {
             custom_edge_style: false,
             edge_width: 1.0,
             edge_color: ctx.style().visuals.weak_text_color(),
+            edge_curvature: 0.5,
             flow: egui::Direction::TopDown,
             auto_layout: true,
             node_spacing: [1.0, 1.0],
@@ -118,7 +121,7 @@ fn new_graph() -> Graph {
 
 fn node(name: impl ToString, kind: NodeKind) -> Node {
     let name = name.to_string();
-    Node { name, kind }
+    Node { name, kind, collapsed: false }
 }
 
 fn layout(
@@ -203,6 +206,7 @@ fn nodes(nctx: &mut egui_graph::NodesCtx, ui: &mut egui::Ui, state: &mut State) 
         let response = egui_graph::node::Node::from_id(egui_id)
             .inputs(inputs)
             .outputs(outputs)
+            .collapsed(node.collapsed)
             .flow(state.flow)
             .socket_radius(state.socket_radius)
             .socket_color(state.socket_color)
@@ -284,8 +288,9 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
         let a = egui::Id::new(na);
         let b = egui::Id::new(nb);
         let mut selected = state.interaction.selection.edges.contains(&e);
-        let response =
-            egui_graph::edge::Edge::new((a, output), (b, input), &mut selected).show(ectx, ui);
+        let response = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected)
+            .curvature_factor(state.edge_curvature)
+            .show(ectx, ui);
 
         if response.deleted() {
             state.graph.remove_edge(e);
@@ -301,7 +306,11 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui);
+        let dist_per_pt = egui_graph::edge::Edge::DEFAULT_DISTANCE_PER_POINT;
+        let bezier = edge.bezier_cubic(Some(state.edge_curvature));
+        let pts = bezier.flatten(dist_per_pt).collect();
+        let stroke = ui.visuals().widgets.active.fg_stroke;
+        ui.painter().add(egui::Shape::line(pts, stroke));
     }
 }
 
@@ -360,6 +369,10 @@ fn graph_config(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut Stat
                     ui.color_edit_button_srgba(&mut state.edge_color);
                     ui.label("Socket color:");
                     ui.color_edit_button_srgba(&mut state.socket_color);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Edge curvature:");
+                    ui.add(egui::Slider::new(&mut state.edge_curvature, 0.0..=1.0));
                 });
             });
             ui.label(format!("Scene: {:?}", view.scene_rect));

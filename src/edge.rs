@@ -14,6 +14,7 @@ pub struct Edge<'a> {
     edge: ((egui::Id, OutputIx), (egui::Id, InputIx)),
     distance_per_point: f32,
     selected: &'a mut bool,
+    curvature_factor: Option<f32>,
 }
 
 /// A response returned from the [`Edge`] widget.
@@ -43,6 +44,7 @@ impl<'a> Edge<'a> {
             edge: (a, b),
             distance_per_point: Self::DEFAULT_DISTANCE_PER_POINT,
             selected,
+            curvature_factor: None,
         }
     }
 
@@ -59,12 +61,24 @@ impl<'a> Edge<'a> {
         self
     }
 
+    /// Set the curvature factor for the bezier curve.
+    ///
+    /// The curvature factor controls how curved the edge appears. A value of 0.5
+    /// places the curve control points at the midpoint distance between the nodes.
+    ///
+    /// Default: `None` (which defaults to 0.5 in the bezier implementation)
+    pub fn curvature_factor(mut self, factor: f32) -> Self {
+        self.curvature_factor = Some(factor);
+        self
+    }
+
     /// Process any user interaction with the edge and present it.
     pub fn show(self, ectx: &mut EdgesCtx, ui: &mut egui::Ui) -> EdgeResponse {
         let Self {
             edge: ((a, output), (b, input)),
             distance_per_point,
             selected,
+            curvature_factor,
         } = self;
 
         // Retrieve the location and direction of the node sockets.
@@ -72,7 +86,7 @@ impl<'a> Edge<'a> {
         let b_in = ectx.input(ui, b, input).unwrap();
 
         // TODO: Cache the curve and its points?
-        let bezier = bezier::Cubic::from_edge_points(a_out, b_in);
+        let bezier = bezier::Cubic::from_edge_points(a_out, b_in, curvature_factor);
 
         // Check the graph `Ui` for interaction.
         let response = ui.response();
