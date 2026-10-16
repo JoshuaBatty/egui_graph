@@ -350,6 +350,8 @@ struct GraphInteraction {
     select: bool,
     selection_rect: Option<egui::Rect>,
     drag_nodes_delta: egui::Vec2,
+    /// The pressed node of a node drag that ended this update.
+    drag_released: Option<PressedNode>,
 }
 
 /// The response returned by [`Graph::show`].
@@ -360,6 +362,14 @@ pub struct GraphResponse<R> {
     pub response: egui::Response,
     /// The set of selected nodes, present only when the selection changed this frame.
     pub selection_changed: Option<HashSet<NodeId>>,
+    /// Whether a drag of the selected nodes ended this frame with the nodes in
+    /// a new position.
+    ///
+    /// This is `true` only on the frame the drag ends. A press and release in
+    /// place, or a drag back to the start, leaves it `false`. Use it to tell a
+    /// move by the user from layout changes the graph makes itself, such as
+    /// snapping or placing a node that has no position.
+    pub nodes_moved: bool,
 }
 
 impl Graph {
@@ -696,6 +706,7 @@ impl Graph {
             let mut select = false;
             let mut closest_socket = None;
             let mut socket_press_released = None;
+            let mut drag_released = None;
             // Alignment guide lines collected during a drag, as (is_x_axis, line).
             let mut guide_lines: Vec<(bool, AlignLine)> = Vec::new();
 
@@ -881,6 +892,7 @@ impl Graph {
                 selection_rect = interaction.selection_rect;
                 select = interaction.select;
                 socket_press_released = interaction.socket_press_released;
+                drag_released = interaction.drag_released;
             }
 
             // Snap node positions to whole graph-space units. Runs every frame
@@ -903,6 +915,12 @@ impl Graph {
                     *pos = snap_pos(snap, self.snap_step, *pos);
                 }
             }
+
+            // The whole selection moves with the pressed node, so the pressed
+            // node alone tells whether the drag moved the nodes. Compare after
+            // snapping, so a drag back to the start counts as no move.
+            let nodes_moved = drag_released
+                .is_some_and(|n: PressedNode| layout.get(&n.id) != Some(&n.position_at_origin));
 
             // Paint the background rect.
             let visible_rect = ui.clip_rect();
@@ -958,7 +976,7 @@ impl Graph {
                 None
             };
 
-            (output, selection_changed)
+            (output, selection_changed, nodes_moved)
         });
 
         if self.center_view {
@@ -967,11 +985,12 @@ impl Graph {
             }
         }
 
-        let (inner, selection_changed) = scene_response.inner;
+        let (inner, selection_changed, nodes_moved) = scene_response.inner;
         GraphResponse {
             inner,
             response: scene_response.response,
             selection_changed,
+            nodes_moved,
         }
     }
 }
@@ -1413,6 +1432,7 @@ fn graph_interaction(
     let mut socket_press_released = None;
     let mut drag_nodes_delta = egui::Vec2::ZERO;
     let mut selection_rect = None;
+    let mut drag_released = None;
 
     // Check for selecting/dragging.
     let pressed: Option<Pressed> = if let Some(pressed) = pressed {
@@ -1440,7 +1460,7 @@ fn graph_interaction(
             match pressed.action {
                 PressAction::Select => select = true,
                 PressAction::Socket(socket) => socket_press_released = Some(socket),
-                _ => (),
+                PressAction::DragNodes { ref node } => drag_released = node.clone(),
             }
             None
         } else {
@@ -1484,6 +1504,7 @@ fn graph_interaction(
         select,
         selection_rect,
         drag_nodes_delta,
+        drag_released,
     }
 }
 
@@ -2467,28 +2488,30 @@ mod tests {
         const DT: f32 = 1.0 / 60.0;
 
         /// A graph of the node `A`, driven one pass at a time.
-        struct TestGraph {
+        pub(super) struct TestGraph {
             ctx: egui::Context,
             view: View,
             time: f64,
         }
 
         /// The graph state observed at the end of a pass.
-        struct Pass {
+        pub(super) struct Pass {
             scene_rect: Rect,
             /// The graph-space position of `A`.
-            a_pos: Pos2,
+            pub(super) a_pos: Pos2,
             /// A screen-space point on the frame of `A`, clear of its content,
             /// as the label within the frame senses presses for text
             /// selection.
-            a_grip: Pos2,
+            pub(super) a_grip: Pos2,
             /// The graph-space pointer position.
             ptr: Option<Pos2>,
+            /// See [`GraphResponse::nodes_moved`](crate::GraphResponse::nodes_moved).
+            pub(super) nodes_moved: bool,
         }
 
         /// Lay out a new graph with `A` at `a_pos`, over two passes, since
         /// sizes settle after the first.
-        fn test_graph(a_pos: Pos2) -> (TestGraph, Pass) {
+        pub(super) fn test_graph(a_pos: Pos2) -> (TestGraph, Pass) {
             let view = View {
                 scene_rect: SCREEN,
                 layout: [(A, a_pos)].into(),
@@ -2504,7 +2527,7 @@ mod tests {
         }
 
         /// Run one pass of the graph with the given input events.
-        fn pass(g: &mut TestGraph, events: Vec<egui::Event>) -> Pass {
+        pub(super) fn pass(g: &mut TestGraph, events: Vec<egui::Event>) -> Pass {
             g.time += f64::from(DT);
             let input = egui::RawInput {
                 screen_rect: Some(SCREEN),
@@ -2514,9 +2537,10 @@ mod tests {
                 ..Default::default()
             };
             let mut seen = None;
+            let mut nodes_moved = false;
             let _ = g.ctx.run_ui(input, |ui| {
                 let graph = Graph::new(GRAPH).snap(None);
-                graph.show(&mut g.view, ui, |ui, show| {
+                let resp = graph.show(&mut g.view, ui, |ui, show| {
                     let mut a = None;
                     show.nodes(ui, |nctx, ui| {
                         let node = Node::from_id(A);
@@ -2531,6 +2555,7 @@ mod tests {
                     let grip = a.rect.min + Vec2::splat(2.0);
                     seen = Some((to_screen.mul_pos(grip), ptr));
                 });
+                nodes_moved = resp.nodes_moved;
             });
             let (a_grip, ptr) = seen.expect("the graph ran");
             Pass {
@@ -2538,11 +2563,12 @@ mod tests {
                 a_pos: g.view.layout[&A],
                 a_grip,
                 ptr,
+                nodes_moved,
             }
         }
 
         /// A press or release of the primary button at `pos`.
-        fn primary(pos: Pos2, pressed: bool) -> egui::Event {
+        pub(super) fn primary(pos: Pos2, pressed: bool) -> egui::Event {
             egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,
@@ -2670,6 +2696,51 @@ mod tests {
                 let p = pass(&mut g, vec![]);
                 assert_eq!(p.scene_rect, pressed.scene_rect);
             }
+        }
+    }
+
+    mod nodes_moved {
+        use super::auto_pan::{pass, primary, test_graph};
+        use egui::{pos2, vec2};
+
+        /// A nudge smaller than egui's drag threshold still moves the node,
+        /// so it counts as a move, on the release frame only.
+        #[test]
+        fn a_small_nudge_is_a_move() {
+            let (mut g, p) = test_graph(pos2(400.0, 300.0));
+            let start = p.a_grip;
+            let a_start = p.a_pos;
+            pass(&mut g, vec![egui::Event::PointerMoved(start)]);
+            assert!(!pass(&mut g, vec![primary(start, true)]).nodes_moved);
+            let nudged = start + vec2(3.0, 0.0);
+            let moving = pass(&mut g, vec![egui::Event::PointerMoved(nudged)]);
+            assert!(!moving.nodes_moved);
+            assert_eq!(moving.a_pos, a_start + vec2(3.0, 0.0));
+            assert!(pass(&mut g, vec![primary(nudged, false)]).nodes_moved);
+            assert!(!pass(&mut g, vec![]).nodes_moved);
+        }
+
+        #[test]
+        fn a_press_in_place_is_not_a_move() {
+            let (mut g, p) = test_graph(pos2(400.0, 300.0));
+            let start = p.a_grip;
+            pass(&mut g, vec![egui::Event::PointerMoved(start)]);
+            pass(&mut g, vec![primary(start, true)]);
+            assert!(!pass(&mut g, vec![primary(start, false)]).nodes_moved);
+        }
+
+        #[test]
+        fn a_drag_back_to_the_start_is_not_a_move() {
+            let (mut g, p) = test_graph(pos2(400.0, 300.0));
+            let start = p.a_grip;
+            pass(&mut g, vec![egui::Event::PointerMoved(start)]);
+            pass(&mut g, vec![primary(start, true)]);
+            let away = start + vec2(40.0, 20.0);
+            pass(&mut g, vec![egui::Event::PointerMoved(away)]);
+            pass(&mut g, vec![egui::Event::PointerMoved(start)]);
+            let released = pass(&mut g, vec![primary(start, false)]);
+            assert_eq!(released.a_pos, p.a_pos);
+            assert!(!released.nodes_moved);
         }
     }
 }
