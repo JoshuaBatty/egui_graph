@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/nannou-org/egui_graph/compare/v0.16.5...v0.17.0) - 2026-10-16
+
+### Added
+
+- report when a node drag ends with the nodes moved
+
 ## [0.16.5](https://github.com/nannou-org/egui_graph/compare/v0.16.4...v0.16.5) - 2026-10-05
 
 ### Added
