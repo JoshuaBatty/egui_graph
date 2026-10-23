@@ -7,14 +7,23 @@ pub struct Cubic {
     pub to: egui::Pos2,
 }
 
-/// A smooth, piecewise-cubic path threaded through a sequence of waypoints.
+/// A piecewise-cubic path, curved or stepped, from an edge's output socket
+/// to its input socket, optionally through a sequence of waypoints.
 ///
-/// Used to route edges through the corridors reserved by the automatic
-/// layout; without waypoints it is equivalent to a single [`Cubic`].
+/// Waypoints route edges through the corridors reserved by the automatic
+/// layout. A curved path without waypoints is a single [`Cubic`].
 #[derive(Clone, Debug)]
 pub struct Path {
     segments: Vec<Cubic>,
 }
+
+/// The least distance a stepped path runs along the flow from a stop before
+/// it turns to go around. See [`Path::step_via`].
+const STEP_STUB: f32 = 12.0;
+
+/// The handle length, as a share of the radius, of a cubic that draws a
+/// quarter circle.
+const QUARTER_CIRCLE: f32 = 0.552_284_8;
 
 impl Cubic {
     /// Maximum proportion of the socket-to-socket distance used for control points.
@@ -46,6 +55,28 @@ impl Cubic {
             ctrl1,
             ctrl2,
             to,
+        }
+    }
+
+    /// A straight line from `from` to `to`.
+    pub fn line(from: egui::Pos2, to: egui::Pos2) -> Self {
+        let third = (to - from) / 3.0;
+        Self {
+            from,
+            ctrl1: from + third,
+            ctrl2: to - third,
+            to,
+        }
+    }
+
+    /// A quarter circle from `enter` to `leave` that turns about the corner
+    /// `corner`, where the straight runs into and out of the corner meet.
+    pub fn corner(enter: egui::Pos2, corner: egui::Pos2, leave: egui::Pos2) -> Self {
+        Self {
+            from: enter,
+            ctrl1: enter + (corner - enter) * QUARTER_CIRCLE,
+            ctrl2: leave + (corner - leave) * QUARTER_CIRCLE,
+            to: leave,
         }
     }
 
@@ -170,16 +201,31 @@ impl Path {
         b: (egui::Pos2, egui::Vec2),
         curvature: f32,
     ) -> Self {
+        let factor = curvature.clamp(0.0, 1.0) * Cubic::MAX_CURVATURE_FACTOR;
+        Self::curve_via(a, waypoints, b, |chord| chord.length() * factor)
+    }
+
+    /// As [`Path::from_edge_points_via`], with each segment's handle length
+    /// given by `handle` from the segment's chord, the vector from its start
+    /// to its end.
+    pub fn curve_via(
+        a: (egui::Pos2, egui::Vec2),
+        waypoints: &[egui::Pos2],
+        b: (egui::Pos2, egui::Vec2),
+        handle: impl Fn(egui::Vec2) -> f32,
+    ) -> Self {
         let (from, a_norm) = a;
         let (to, b_norm) = b;
 
-        let mut points = Vec::with_capacity(waypoints.len() + 2);
-        points.push(from);
-        points.extend(waypoints.iter().copied());
-        points.push(to);
-        points.dedup();
+        let points = stops(from, waypoints, to);
         if points.len() < 3 {
-            let segments = vec![Cubic::from_edge_points(a, b, curvature)];
+            let len = handle(to - from);
+            let segments = vec![Cubic {
+                from,
+                ctrl1: from + a_norm * len,
+                ctrl2: to + b_norm * len,
+                to,
+            }];
             return Self { segments };
         }
 
@@ -205,12 +251,11 @@ impl Path {
         tangents.push(-b_norm);
 
         // One cubic per consecutive pair, sharing tangents at the joints for
-        // a C1-continuous curve. Handle lengths scale with each segment's
-        // own chord, avoiding overshoot on unevenly spaced waypoints.
-        let factor = curvature.clamp(0.0, 1.0) * Cubic::MAX_CURVATURE_FACTOR;
+        // a C1-continuous curve. Handle lengths follow each segment's own
+        // chord, avoiding overshoot on unevenly spaced waypoints.
         let segments = (0..n - 1)
             .map(|i| {
-                let len = points[i].distance(points[i + 1]) * factor;
+                let len = handle(points[i + 1] - points[i]);
                 Cubic {
                     from: points[i],
                     ctrl1: points[i] + tangents[i] * len,
@@ -219,6 +264,76 @@ impl Path {
                 }
             })
             .collect();
+        Self { segments }
+    }
+
+    /// A path of straight runs along and across the flow, through the given
+    /// intermediate waypoints, with each corner rounded to `radius`.
+    ///
+    /// Between two stops the path runs along the flow (the output socket's
+    /// normal), across it at the midpoint, then along it again. When the next
+    /// stop lies behind the last, or too close ahead to turn twice, the path
+    /// steps out along the flow, around to one side, and back in.
+    pub fn step_via(
+        a: (egui::Pos2, egui::Vec2),
+        waypoints: &[egui::Pos2],
+        b: (egui::Pos2, egui::Vec2),
+        radius: f32,
+    ) -> Self {
+        let (from, flow) = a;
+        let (to, _) = b;
+        let radius = radius.max(0.0);
+        let across = flow.rot90();
+        let stub = (2.0 * radius).max(STEP_STUB);
+        let coords = |p: egui::Pos2| (p.to_vec2().dot(flow), p.to_vec2().dot(across));
+        let point = |along: f32, side: f32| egui::Pos2::ZERO + flow * along + across * side;
+
+        // The corners of the run, from stop to stop.
+        let stops = stops(from, waypoints, to);
+        let mut corners = vec![from];
+        for pair in stops.windows(2) {
+            let ((pa, pc), (qa, qc)) = (coords(pair[0]), coords(pair[1]));
+            if qa - pa >= 2.0 * stub {
+                let mid = (pa + qa) / 2.0;
+                corners.extend([point(mid, pc), point(mid, qc)]);
+            } else {
+                let side = match (qc - pc).abs() >= 4.0 * stub {
+                    true => (pc + qc) / 2.0,
+                    false => pc.max(qc) + 2.0 * stub,
+                };
+                corners.extend([
+                    point(pa + stub, pc),
+                    point(pa + stub, side),
+                    point(qa - stub, side),
+                    point(qa - stub, qc),
+                ]);
+            }
+            corners.push(pair[1]);
+        }
+        let corners = straighten(&corners);
+
+        // Straight runs between the corners, each corner a quarter circle.
+        let mut segments = vec![];
+        let mut cursor = corners[0];
+        for i in 1..corners.len() - 1 {
+            let (prev, p, next) = (corners[i - 1], corners[i], corners[i + 1]);
+            let r = radius
+                .min(prev.distance(p) / 2.0)
+                .min(next.distance(p) / 2.0);
+            let enter = p - (p - prev).normalized() * r;
+            let leave = p + (next - p).normalized() * r;
+            if cursor.distance(enter) > f32::EPSILON {
+                segments.push(Cubic::line(cursor, enter));
+            }
+            if r > f32::EPSILON {
+                segments.push(Cubic::corner(enter, p, leave));
+            }
+            cursor = leave;
+        }
+        let last = corners[corners.len() - 1];
+        if segments.is_empty() || cursor.distance(last) > f32::EPSILON {
+            segments.push(Cubic::line(cursor, last));
+        }
         Self { segments }
     }
 
@@ -268,6 +383,35 @@ impl Path {
 }
 
 // True if any of the area of the rect intersects the line.
+/// The stops of a path: its ends with the waypoints between, less any stop
+/// that repeats the one before.
+fn stops(from: egui::Pos2, waypoints: &[egui::Pos2], to: egui::Pos2) -> Vec<egui::Pos2> {
+    let mut stops = Vec::with_capacity(waypoints.len() + 2);
+    stops.push(from);
+    stops.extend(waypoints.iter().copied());
+    stops.push(to);
+    stops.dedup();
+    stops
+}
+
+/// `points` without repeats, nor the points that lie on a straight line
+/// between their neighbours.
+fn straighten(points: &[egui::Pos2]) -> Vec<egui::Pos2> {
+    let mut out: Vec<egui::Pos2> = Vec::with_capacity(points.len());
+    for &p in points {
+        if out.last().is_some_and(|q| q.distance(p) <= f32::EPSILON) {
+            continue;
+        }
+        if let [.., a, b] = out[..] {
+            if (b - a).normalized().dot((p - b).normalized()) > 1.0 - 1e-4 {
+                out.pop();
+            }
+        }
+        out.push(p);
+    }
+    out
+}
+
 fn rect_intersects_line(r: egui::Rect, (a, b): (egui::Pos2, egui::Pos2)) -> bool {
     if !r.intersects(egui::Rect::from_two_pos(a, b)) {
         return false;
