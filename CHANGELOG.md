@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/nannou-org/egui_graph/compare/v0.17.1...v0.18.0) - 2026-10-23
+
+### Added
+
+- [**breaking**] limit bezier edge handles to 50 by default
+- [**breaking**] add edge shapes
+
+### Fixed
+
+- give the default guide stroke width an explicit f32 type
+- start the demo's bezier edges with a 500 handle limit
+
 ## [0.17.1](https://github.com/nannou-org/egui_graph/compare/v0.17.0...v0.17.1) - 2026-10-23
 
 ### Fixed
