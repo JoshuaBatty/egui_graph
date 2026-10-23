@@ -340,21 +340,24 @@ impl<'a> Edge<'a> {
 
 impl EdgeShape {
     /// The default: a [`EdgeShape::Bezier`] of [`bezier::Cubic::DEFAULT_CURVATURE`]
-    /// with no limit on its handles.
+    /// with handles of at most [`EdgeShape::DEFAULT_MAX_HANDLE`].
     pub const DEFAULT: Self = Self::Bezier {
         curvature: bezier::Cubic::DEFAULT_CURVATURE,
-        max_handle: f32::INFINITY,
+        max_handle: Self::DEFAULT_MAX_HANDLE,
     };
+    /// The `max_handle` of [`EdgeShape::bezier`].
+    pub const DEFAULT_MAX_HANDLE: f32 = 50.0;
     /// The `min_span` of [`EdgeShape::flow`].
     pub const DEFAULT_MIN_SPAN: f32 = 24.0;
     /// The `radius` of [`EdgeShape::step`].
     pub const DEFAULT_RADIUS: f32 = 10.0;
 
-    /// A [`EdgeShape::Bezier`] of `curvature` with no limit on its handles.
+    /// A [`EdgeShape::Bezier`] of `curvature`, with a `max_handle` of
+    /// [`EdgeShape::DEFAULT_MAX_HANDLE`].
     pub fn bezier(curvature: f32) -> Self {
         Self::Bezier {
             curvature,
-            max_handle: f32::INFINITY,
+            max_handle: Self::DEFAULT_MAX_HANDLE,
         }
     }
 
@@ -497,7 +500,9 @@ mod tests {
                     })
                     .edges(ui, |ectx, ui| {
                         let mut painted = false;
-                        let edge = Edge::new((A, 0), (B, 0), &mut selected);
+                        // Points 1 apart, so the closest point is within 1 of the
+                        // true one whatever the edge's shape.
+                        let edge = Edge::new((A, 0), (B, 0), &mut selected).distance_per_point(1.0);
                         let response = edge.show_with(ectx, ui, |_, _| painted = true);
                         out = Some(Pass {
                             painted,
@@ -608,14 +613,23 @@ mod tests {
     #[test]
     fn bezier_max_handle_limits_the_handles() {
         let (a, b) = sockets((0.0, 0.0), (400.0, 20.0));
-        let open = EdgeShape::bezier(0.5).path(a, &[], b).segments()[0];
+        let open = EdgeShape::Bezier {
+            curvature: 0.5,
+            max_handle: f32::INFINITY,
+        };
+        let open = open.path(a, &[], b).segments()[0];
+        let default = EdgeShape::DEFAULT.path(a, &[], b).segments()[0];
         let capped = EdgeShape::Bezier {
             curvature: 0.5,
             max_handle: 30.0,
         };
         let capped = capped.path(a, &[], b).segments()[0];
         // A quarter of the distance between the sockets.
-        assert!((open.ctrl1.y - 400.5f32.hypot(0.0) * 0.25).abs() < 1.0);
+        assert!((open.ctrl1.y - 400.0f32.hypot(20.0) * 0.25).abs() < 1e-3);
+        assert_eq!(
+            default.ctrl1,
+            egui::pos2(0.0, EdgeShape::DEFAULT_MAX_HANDLE)
+        );
         assert_eq!(capped.ctrl1, egui::pos2(0.0, 30.0));
         assert_eq!(capped.ctrl2, egui::pos2(400.0, -10.0));
     }
