@@ -1258,11 +1258,9 @@ pub struct EdgeInProgress {
 }
 
 impl EdgeInProgress {
-    /// Construct the bezier curve for this in-progress edge.
-    ///
-    /// `curvature` is a normalized `0.0..=1.0` value controlling how
-    /// pronounced the curve is. See [`bezier::Cubic::DEFAULT_CURVATURE`].
-    pub fn bezier_cubic(&self, curvature: f32) -> bezier::Cubic {
+    /// The path of this in-progress edge, in the given `shape`, so it can
+    /// match the graph's other edges.
+    pub fn path(&self, shape: edge::EdgeShape) -> bezier::Path {
         let start = (self.start.pos, self.start.normal);
         let end_normal = self
             .end_socket
@@ -1270,26 +1268,25 @@ impl EdgeInProgress {
             .map(|&(_, n)| n)
             .unwrap_or(-self.start.normal);
         let end = (self.end_pos, end_normal);
-        bezier::Cubic::from_edge_points(start, end, curvature)
+        shape.path(start, &[], end)
     }
 
     /// Short-hand for painting the in-progress edge with some reasonable defaults.
     ///
     /// If you require custom styling of the in-progress edge, use
-    /// [`EdgeInProgress::show_styled`], [`EdgeInProgress::bezier_cubic`] or the
+    /// [`EdgeInProgress::show_styled`], [`EdgeInProgress::path`] or the
     /// individual fields to paint it however you wish.
-    pub fn show(&self, ui: &egui::Ui, curvature: f32) {
-        self.show_styled(ui, None, curvature);
+    pub fn show(&self, ui: &egui::Ui, shape: edge::EdgeShape) {
+        self.show_styled(ui, None, shape);
     }
 
     /// As [`EdgeInProgress::show`], but with an optional `stroke` override, so the
     /// in-progress edge can match styled edges.
     ///
     /// When `stroke` is `None`, `ui.visuals().widgets.active.fg_stroke` is used.
-    pub fn show_styled(&self, ui: &egui::Ui, stroke: Option<egui::Stroke>, curvature: f32) {
+    pub fn show_styled(&self, ui: &egui::Ui, stroke: Option<egui::Stroke>, shape: edge::EdgeShape) {
         let dist_per_pt = crate::edge::Edge::DEFAULT_DISTANCE_PER_POINT;
-        let bezier = self.bezier_cubic(curvature);
-        let pts = bezier.flatten(dist_per_pt).collect();
+        let pts = self.path(shape).flatten(dist_per_pt).collect();
         let stroke = stroke.unwrap_or(ui.visuals().widgets.active.fg_stroke);
         ui.painter().add(egui::Shape::line(pts, stroke));
     }

@@ -42,7 +42,7 @@ struct State {
     custom_edge_style: bool,
     edge_width: f32,
     edge_color: egui::Color32,
-    edge_curvature: f32,
+    edge_shape: egui_graph::edge::EdgeShape,
     #[cfg(feature = "layout")]
     auto_layout: bool,
     /// Whether the layout accounts for the socket each edge connects to;
@@ -125,7 +125,7 @@ impl App {
             custom_edge_style: false,
             edge_width: 1.0,
             edge_color: weak_text_color,
-            edge_curvature: 0.5,
+            edge_shape: egui_graph::edge::EdgeShape::DEFAULT,
             flow: egui::Direction::TopDown,
             #[cfg(feature = "layout")]
             auto_layout: true,
@@ -537,7 +537,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
         *occurrence += 1;
         let mut selected = state.interaction.selection.edges.contains(&e);
         let response = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected)
-            .curvature_factor(state.edge_curvature)
+            .shape(state.edge_shape)
             .waypoints(waypoints)
             .show(ectx, ui);
 
@@ -555,7 +555,7 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui, state.edge_curvature);
+        edge.show(ui, state.edge_shape);
     }
 }
 
@@ -616,10 +616,7 @@ fn graph_config(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut Stat
                     }
                 });
             });
-            ui.horizontal(|ui| {
-                ui.label("Edge curvature:");
-                ui.add(egui::Slider::new(&mut state.edge_curvature, 0.0..=1.0));
-            });
+            edge_shape_config(ui, &mut state.edge_shape);
             #[cfg(feature = "layout")]
             ui.horizontal(|ui| {
                 ui.label("Layer gap:");
@@ -705,4 +702,58 @@ fn graph_config(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut Stat
             ui.add_space(8.0);
             ui.label(format!("Scene: {:?}", view.scene_rect));
         });
+}
+
+fn edge_shape_config(ui: &mut egui::Ui, shape: &mut egui_graph::edge::EdgeShape) {
+    use egui_graph::edge::EdgeShape;
+    ui.horizontal(|ui| {
+        ui.label("Edge shape:");
+        let bezier = matches!(shape, EdgeShape::Bezier { .. });
+        let flow = matches!(shape, EdgeShape::Flow { .. });
+        let step = matches!(shape, EdgeShape::Step { .. });
+        if ui.selectable_label(bezier, "Bezier").clicked() && !bezier {
+            *shape = EdgeShape::DEFAULT;
+        }
+        if ui.selectable_label(flow, "Flow").clicked() && !flow {
+            *shape = EdgeShape::flow(egui_graph::bezier::Cubic::DEFAULT_CURVATURE);
+        }
+        if ui.selectable_label(step, "Step").clicked() && !step {
+            *shape = EdgeShape::step();
+        }
+    });
+    match shape {
+        EdgeShape::Bezier {
+            curvature,
+            max_handle,
+        } => {
+            ui.horizontal(|ui| {
+                ui.label("Edge curvature:");
+                ui.add(egui::Slider::new(curvature, 0.0..=1.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Edge max handle:");
+                let range = 1.0..=1000.0;
+                ui.add(egui::Slider::new(max_handle, range).logarithmic(true));
+            });
+        }
+        EdgeShape::Flow {
+            curvature,
+            min_span,
+        } => {
+            ui.horizontal(|ui| {
+                ui.label("Edge curvature:");
+                ui.add(egui::Slider::new(curvature, 0.0..=1.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Edge min span:");
+                ui.add(egui::Slider::new(min_span, 0.0..=100.0));
+            });
+        }
+        EdgeShape::Step { radius } => {
+            ui.horizontal(|ui| {
+                ui.label("Edge corner radius:");
+                ui.add(egui::Slider::new(radius, 0.0..=40.0));
+            });
+        }
+    }
 }

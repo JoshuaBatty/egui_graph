@@ -18,7 +18,7 @@ pub struct Edge<'a> {
     edge: ((NodeId, OutputIx), (NodeId, InputIx)),
     waypoints: &'a [egui::Pos2],
     distance_per_point: f32,
-    curvature: f32,
+    shape: EdgeShape,
     stroke: Option<egui::Stroke>,
     hovered_stroke: Option<egui::Stroke>,
     selected_stroke: Option<egui::Stroke>,
@@ -61,6 +61,30 @@ pub struct EdgePaintCtx<'a> {
     pub stroke: egui::Stroke,
 }
 
+/// How an edge runs from its output socket to its input socket.
+///
+/// Every shape leaves each socket along the socket's normal, so an edge between
+/// sockets that line up along the flow is straight in each shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EdgeShape {
+    /// A curve whose handles leave the sockets along their normals. Each
+    /// handle is `curvature` times half the distance between the sockets, and
+    /// at most `max_handle` long, so an edge between distant nodes does not
+    /// swing far out. A `curvature` of `0.0` gives a straight line.
+    Bezier { curvature: f32, max_handle: f32 },
+    /// A curve whose handles follow how far the edge runs along the flow, not
+    /// across it, so a long run across the flow stays flat. Each handle is
+    /// `curvature` times the run along the flow, taken as at least `min_span`
+    /// so a near-level edge still bends. An edge that runs back against the
+    /// flow takes `curvature` times `min_span` plus its run back, and loops
+    /// around. A `curvature` of `0.0` gives a straight line.
+    Flow { curvature: f32, min_span: f32 },
+    /// Straight runs along the flow, across it at the midpoint, and along it
+    /// again, with corners rounded to `radius`. An edge that runs back
+    /// against the flow steps around. See [`bezier::Path::step_via`].
+    Step { radius: f32 },
+}
+
 /// An index of a node's input or output socket.
 pub type SocketIx = usize;
 /// An index of a node's input socket.
@@ -77,7 +101,7 @@ impl<'a> Edge<'a> {
             edge: (a, b),
             waypoints: &[],
             distance_per_point: Self::DEFAULT_DISTANCE_PER_POINT,
-            curvature: bezier::Cubic::DEFAULT_CURVATURE,
+            shape: EdgeShape::DEFAULT,
             stroke: None,
             hovered_stroke: None,
             selected_stroke: None,
@@ -116,15 +140,11 @@ impl<'a> Edge<'a> {
         self
     }
 
-    /// Set the normalized curvature used when constructing the edge bezier.
+    /// How the edge runs between its sockets.
     ///
-    /// Values are clamped to `0.0..=1.0` and then scaled internally so the
-    /// strongest curve uses at most half the socket-to-socket distance for its
-    /// control points.
-    ///
-    /// Default: [`bezier::Cubic::DEFAULT_CURVATURE`].
-    pub fn curvature_factor(mut self, curvature: f32) -> Self {
-        self.curvature = curvature;
+    /// Default: [`EdgeShape::DEFAULT`].
+    pub fn shape(mut self, shape: EdgeShape) -> Self {
+        self.shape = shape;
         self
     }
 
@@ -179,7 +199,7 @@ impl<'a> Edge<'a> {
             edge: ((a, output), (b, input)),
             waypoints,
             distance_per_point,
-            curvature,
+            shape,
             stroke,
             hovered_stroke,
             selected_stroke,
@@ -209,7 +229,7 @@ impl<'a> Edge<'a> {
             };
         };
 
-        let path = bezier::Path::from_edge_points_via(a_out, waypoints, b_in, curvature);
+        let path = shape.path(a_out, waypoints, b_in);
 
         // The curve lies within the bounds of its control points. Only flatten
         // the curve to paint it within the visible area, or to find its point
@@ -318,6 +338,81 @@ impl<'a> Edge<'a> {
     }
 }
 
+impl EdgeShape {
+    /// The default: a [`EdgeShape::Bezier`] of [`bezier::Cubic::DEFAULT_CURVATURE`]
+    /// with handles of at most [`EdgeShape::DEFAULT_MAX_HANDLE`].
+    pub const DEFAULT: Self = Self::Bezier {
+        curvature: bezier::Cubic::DEFAULT_CURVATURE,
+        max_handle: Self::DEFAULT_MAX_HANDLE,
+    };
+    /// The `max_handle` of [`EdgeShape::bezier`].
+    pub const DEFAULT_MAX_HANDLE: f32 = 50.0;
+    /// The `min_span` of [`EdgeShape::flow`].
+    pub const DEFAULT_MIN_SPAN: f32 = 24.0;
+    /// The `radius` of [`EdgeShape::step`].
+    pub const DEFAULT_RADIUS: f32 = 10.0;
+
+    /// A [`EdgeShape::Bezier`] of `curvature`, with a `max_handle` of
+    /// [`EdgeShape::DEFAULT_MAX_HANDLE`].
+    pub fn bezier(curvature: f32) -> Self {
+        Self::Bezier {
+            curvature,
+            max_handle: Self::DEFAULT_MAX_HANDLE,
+        }
+    }
+
+    /// A [`EdgeShape::Flow`] of `curvature`, with a `min_span` of
+    /// [`EdgeShape::DEFAULT_MIN_SPAN`].
+    pub fn flow(curvature: f32) -> Self {
+        Self::Flow {
+            curvature,
+            min_span: Self::DEFAULT_MIN_SPAN,
+        }
+    }
+
+    /// A [`EdgeShape::Step`] with corners of [`EdgeShape::DEFAULT_RADIUS`].
+    pub fn step() -> Self {
+        Self::Step {
+            radius: Self::DEFAULT_RADIUS,
+        }
+    }
+
+    /// The path of an edge of this shape from the output socket `a` to the
+    /// input socket `b`, each a position and normal, through `waypoints`.
+    pub fn path(
+        self,
+        a: (egui::Pos2, egui::Vec2),
+        waypoints: &[egui::Pos2],
+        b: (egui::Pos2, egui::Vec2),
+    ) -> bezier::Path {
+        match self {
+            Self::Bezier {
+                curvature,
+                max_handle,
+            } => {
+                let factor = curvature.clamp(0.0, 1.0) * bezier::Cubic::MAX_CURVATURE_FACTOR;
+                let handle = |chord: egui::Vec2| (chord.length() * factor).min(max_handle);
+                bezier::Path::curve_via(a, waypoints, b, handle)
+            }
+            Self::Flow {
+                curvature,
+                min_span,
+            } => {
+                let (curvature, flow) = (curvature.clamp(0.0, 1.0), a.1);
+                let handle = |chord: egui::Vec2| {
+                    let along = chord.dot(flow);
+                    match along >= 0.0 {
+                        true => curvature * along.max(min_span),
+                        false => curvature * (min_span - along),
+                    }
+                };
+                bezier::Path::curve_via(a, waypoints, b, handle)
+            }
+            Self::Step { radius } => bezier::Path::step_via(a, waypoints, b, radius),
+        }
+    }
+}
+
 impl EdgeResponse {
     /// Whether or not the edge selected state changed.
     pub fn changed(&self) -> bool {
@@ -341,6 +436,12 @@ impl EdgeResponse {
     }
 }
 
+impl Default for EdgeShape {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 impl ops::Deref for EdgeResponse {
     type Target = egui::Response;
     fn deref(&self) -> &Self::Target {
@@ -356,7 +457,7 @@ impl From<EdgeResponse> for egui::Response {
 
 #[cfg(test)]
 mod tests {
-    use super::Edge;
+    use super::{Edge, EdgeShape};
     use crate::node::{Node, NodeId};
     use crate::{Graph, View};
 
@@ -399,7 +500,9 @@ mod tests {
                     })
                     .edges(ui, |ectx, ui| {
                         let mut painted = false;
-                        let edge = Edge::new((A, 0), (B, 0), &mut selected);
+                        // Points 1 apart, so the closest point is within 1 of the
+                        // true one whatever the edge's shape.
+                        let edge = Edge::new((A, 0), (B, 0), &mut selected).distance_per_point(1.0);
                         let response = edge.show_with(ectx, ui, |_, _| painted = true);
                         out = Some(Pass {
                             painted,
@@ -463,5 +566,111 @@ mod tests {
             "{:?}",
             p.closest_point
         );
+    }
+
+    /// An output socket at `from` facing down and an input socket at `to`
+    /// facing up, as in a top-down graph.
+    fn sockets(
+        from: (f32, f32),
+        to: (f32, f32),
+    ) -> ((egui::Pos2, egui::Vec2), (egui::Pos2, egui::Vec2)) {
+        let a = (egui::pos2(from.0, from.1), egui::vec2(0.0, 1.0));
+        let b = (egui::pos2(to.0, to.1), egui::vec2(0.0, -1.0));
+        (a, b)
+    }
+
+    fn shapes() -> [EdgeShape; 4] {
+        [
+            EdgeShape::DEFAULT,
+            EdgeShape::Bezier {
+                curvature: 0.5,
+                max_handle: 30.0,
+            },
+            EdgeShape::flow(0.5),
+            EdgeShape::step(),
+        ]
+    }
+
+    #[test]
+    fn every_shape_is_straight_between_aligned_sockets() {
+        let (a, b) = sockets((0.0, 0.0), (0.0, 120.0));
+        for shape in shapes() {
+            let path = shape.path(a, &[], b);
+            assert!(path.flatten(2.0).all(|p| p.x.abs() < 1e-3), "{shape:?}");
+        }
+    }
+
+    #[test]
+    fn zero_curvature_is_straight() {
+        let (a, b) = sockets((0.0, 0.0), (100.0, 50.0));
+        for shape in [EdgeShape::bezier(0.0), EdgeShape::flow(0.0)] {
+            let path = shape.path(a, &[], b);
+            let on_line = |p: egui::Pos2| (p.y - p.x / 2.0).abs() < 1e-3;
+            assert!(path.flatten(2.0).all(on_line), "{shape:?}");
+        }
+    }
+
+    #[test]
+    fn bezier_max_handle_limits_the_handles() {
+        let (a, b) = sockets((0.0, 0.0), (400.0, 20.0));
+        let open = EdgeShape::Bezier {
+            curvature: 0.5,
+            max_handle: f32::INFINITY,
+        };
+        let open = open.path(a, &[], b).segments()[0];
+        let default = EdgeShape::DEFAULT.path(a, &[], b).segments()[0];
+        let capped = EdgeShape::Bezier {
+            curvature: 0.5,
+            max_handle: 30.0,
+        };
+        let capped = capped.path(a, &[], b).segments()[0];
+        // A quarter of the distance between the sockets.
+        assert!((open.ctrl1.y - 400.0f32.hypot(20.0) * 0.25).abs() < 1e-3);
+        assert_eq!(
+            default.ctrl1,
+            egui::pos2(0.0, EdgeShape::DEFAULT_MAX_HANDLE)
+        );
+        assert_eq!(capped.ctrl1, egui::pos2(0.0, 30.0));
+        assert_eq!(capped.ctrl2, egui::pos2(400.0, -10.0));
+    }
+
+    #[test]
+    fn flow_handles_follow_the_run_along_the_flow() {
+        let handle = |to: (f32, f32)| {
+            let (a, b) = sockets((0.0, 0.0), to);
+            EdgeShape::flow(0.5).path(a, &[], b).segments()[0].ctrl1.y
+        };
+        // Half the run down, however far the run across.
+        assert_eq!(handle((0.0, 100.0)), 50.0);
+        assert_eq!(handle((600.0, 100.0)), 50.0);
+        // A near-level edge bends as if it ran `min_span` down.
+        assert_eq!(handle((400.0, 10.0)), 12.0);
+        // An edge that runs back loops out by `min_span` plus its run back.
+        assert_eq!(handle((40.0, -60.0)), 42.0);
+    }
+
+    #[test]
+    fn step_turns_across_at_the_midpoint() {
+        let (a, b) = sockets((0.0, 0.0), (100.0, 100.0));
+        let path = EdgeShape::step().path(a, &[], b);
+        let segments = path.segments();
+        assert_eq!(segments[0].from, a.0);
+        assert_eq!(segments[segments.len() - 1].to, b.0);
+        let pts: Vec<_> = path.flatten(1.0).collect();
+        let within = |v: f32| (-1e-3..=100.0 + 1e-3).contains(&v);
+        assert!(pts.iter().all(|p| within(p.x) && within(p.y)));
+        let mid = egui::pos2(50.0, 50.0);
+        assert!(path.closest_point(1.0, mid).distance(mid) < 0.5);
+    }
+
+    #[test]
+    fn step_goes_around_an_input_behind_its_output() {
+        let (a, b) = sockets((0.0, 0.0), (20.0, -80.0));
+        let path = EdgeShape::step().path(a, &[], b);
+        let pts: Vec<_> = path.flatten(1.0).collect();
+        // It leaves down, comes in from above, and ends on the input.
+        assert!(pts.iter().any(|p| p.y >= 19.0));
+        assert!(pts.iter().any(|p| p.y <= -99.0));
+        assert_eq!(*pts.last().unwrap(), b.0);
     }
 }
