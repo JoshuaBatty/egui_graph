@@ -1969,7 +1969,7 @@ fn paint_align_guides(
     // Default to a faint 1px line in the selection colour at reduced opacity.
     let base = guide_stroke.unwrap_or_else(|| {
         let color = ui.visuals().selection.stroke.color.gamma_multiply(0.5);
-        egui::Stroke::new(1.0, color)
+        egui::Stroke::new(1.0_f32, color)
     });
     let stroke = egui::Stroke::new(base.width / scale, base.color);
     let painter = ui.painter();
