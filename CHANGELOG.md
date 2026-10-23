@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1](https://github.com/nannou-org/egui_graph/compare/v0.17.0...v0.17.1) - 2026-10-23
+
+### Fixed
+
+- place a node at its target when its animation time is zero
+
 ## [0.17.0](https://github.com/nannou-org/egui_graph/compare/v0.16.5...v0.17.0) - 2026-10-16
 
 ### Added
