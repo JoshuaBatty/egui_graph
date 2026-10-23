@@ -412,7 +412,13 @@ impl Node {
             let ctx = ui.ctx();
             let x = ctx.animate_value_with_time(idx, target_pos_graph.x, animation_time);
             let y = ctx.animate_value_with_time(idy, target_pos_graph.y, animation_time);
-            egui::Pos2::new(x, y)
+            // With no animation time, egui resets the animation to the target but
+            // returns the value from before, which would place the node a pass
+            // late.
+            match animation_time > 0.0 {
+                true => egui::Pos2::new(x, y),
+                false => *target_pos_graph,
+            }
         };
 
         let (min_size, content_min_size, socket_padding) = self.min_sizes(ui);
@@ -1032,6 +1038,30 @@ mod tests {
                 .show_static(ui, |c| c.framed(|ui, _| enabled = Some(ui.is_enabled())));
         });
         assert_eq!(enabled, Some(false));
+    }
+
+    /// A node with no animation time takes a new position on the pass it moves
+    /// to it, not on the pass after.
+    #[test]
+    fn zero_animation_time_places_the_node_at_once() {
+        let ctx = egui::Context::default();
+        let mut view = crate::View::default();
+        let mut min = None;
+        for x in [0.0, 0.0, 100.0] {
+            view.layout.insert(NodeId(0), egui::pos2(x, 0.0));
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                crate::Graph::from_id(egui::Id::new("graph")).show(&mut view, ui, |ui, show| {
+                    show.nodes(ui, |nctx, ui| {
+                        let res =
+                            Node::from_id(NodeId(0))
+                                .animation_time(0.0)
+                                .show(nctx, ui, |c| c.framed(|ui, _| ui.label("x")));
+                        min = Some(res.rect.min);
+                    });
+                });
+            });
+        }
+        assert_eq!(min, Some(egui::pos2(100.0, 0.0)));
     }
 
     /// Ids made from a value stay the same, so saved layouts stay valid. These
