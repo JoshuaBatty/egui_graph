@@ -125,7 +125,7 @@ impl App {
             custom_edge_style: false,
             edge_width: 1.0,
             edge_color: weak_text_color,
-            edge_shape: egui_graph::edge::EdgeShape::DEFAULT,
+            edge_shape: DEMO_BEZIER,
             flow: egui::Direction::TopDown,
             #[cfg(feature = "layout")]
             auto_layout: true,
@@ -704,6 +704,13 @@ fn graph_config(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut Stat
         });
 }
 
+/// A bezier with a limit on its handles, high enough to leave most edges
+/// as they are, so the limit's slider starts in range.
+const DEMO_BEZIER: egui_graph::edge::EdgeShape = egui_graph::edge::EdgeShape::Bezier {
+    curvature: egui_graph::bezier::Cubic::DEFAULT_CURVATURE,
+    max_handle: 500.0,
+};
+
 fn edge_shape_config(ui: &mut egui::Ui, shape: &mut egui_graph::edge::EdgeShape) {
     use egui_graph::edge::EdgeShape;
     ui.horizontal(|ui| {
@@ -712,7 +719,7 @@ fn edge_shape_config(ui: &mut egui::Ui, shape: &mut egui_graph::edge::EdgeShape)
         let flow = matches!(shape, EdgeShape::Flow { .. });
         let step = matches!(shape, EdgeShape::Step { .. });
         if ui.selectable_label(bezier, "Bezier").clicked() && !bezier {
-            *shape = EdgeShape::DEFAULT;
+            *shape = DEMO_BEZIER;
         }
         if ui.selectable_label(flow, "Flow").clicked() && !flow {
             *shape = EdgeShape::flow(egui_graph::bezier::Cubic::DEFAULT_CURVATURE);
@@ -732,7 +739,7 @@ fn edge_shape_config(ui: &mut egui::Ui, shape: &mut egui_graph::edge::EdgeShape)
             });
             ui.horizontal(|ui| {
                 ui.label("Edge max handle:");
-                let range = 10.0..=f32::INFINITY;
+                let range = 1.0..=1000.0;
                 ui.add(egui::Slider::new(max_handle, range).logarithmic(true));
             });
         }
