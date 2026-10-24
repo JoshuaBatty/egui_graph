@@ -52,7 +52,8 @@ pub struct Graph {
     snap: Option<Snap>,
     /// The granularity (in graph-space units) used when snapping.
     snap_step: f32,
-    /// Whether dragged nodes snap to align their edges/centers with other nodes.
+    /// Whether dragged nodes snap to align their edges, centers or sockets
+    /// with other nodes.
     align: bool,
     /// Which node features are considered when aligning.
     align_targets: AlignTargets,
@@ -124,7 +125,10 @@ pub struct AlignTargets {
     pub edges: bool,
     /// Align the horizontal and vertical centers.
     pub centers: bool,
-    // Follow-up: a `sockets` field for socket-to-socket alignment.
+    /// Align an output socket with an input socket downstream of it, across
+    /// the flow, so the edge between them runs straight. Only nodes of the
+    /// same flow direction align their sockets.
+    pub sockets: bool,
 }
 
 impl Default for AlignTargets {
@@ -132,6 +136,7 @@ impl Default for AlignTargets {
         AlignTargets {
             edges: true,
             centers: false,
+            sockets: true,
         }
     }
 }
@@ -393,10 +398,12 @@ impl Graph {
     pub const DEFAULT_SNAP_STEP: f32 = 1.0;
     /// Snap-align is enabled by default.
     pub const DEFAULT_ALIGN: bool = true;
-    /// By default, alignment considers edges only (centers can feel busy).
+    /// By default, alignment considers edges and sockets, but not centers
+    /// (centers can feel busy).
     pub const DEFAULT_ALIGN_TARGETS: AlignTargets = AlignTargets {
         edges: true,
         centers: false,
+        sockets: true,
     };
     /// The default alignment threshold. `None` derives it from the style's
     /// `interact_radius`.
@@ -563,7 +570,8 @@ impl Graph {
         self
     }
 
-    /// Whether dragged nodes snap to align their edges/centers with other nodes.
+    /// Whether dragged nodes snap to align their edges, centers or sockets
+    /// with other nodes.
     ///
     /// When a dragged node (or selection) comes within
     /// [`align_threshold`](Self::align_threshold) of another node, it snaps
@@ -581,14 +589,14 @@ impl Graph {
 
     /// Which node features ([`AlignTargets`]) are considered when aligning.
     ///
-    /// Default: [`Self::DEFAULT_ALIGN_TARGETS`] (edges and centers).
+    /// Default: [`Self::DEFAULT_ALIGN_TARGETS`] (edges and sockets).
     pub fn align_targets(mut self, targets: AlignTargets) -> Self {
         self.align_targets = targets;
         self
     }
 
-    /// The distance (in *screen* pixels) within which an edge or center snaps
-    /// to align.
+    /// The distance (in *screen* pixels) within which an edge, center or
+    /// socket snaps to align.
     ///
     /// The value is converted to graph units using the live zoom each frame, so
     /// the snap "feel" stays constant in pixels across zoom levels. When unset
@@ -836,14 +844,30 @@ impl Graph {
                                     .collect();
                                 refs.sort_by_key(|(id, _)| *id);
                                 let reference_rects: Vec<egui::Rect> =
-                                    refs.into_iter().map(|(_, r)| r).collect();
-                                align_adjust(
+                                    refs.iter().map(|(_, r)| *r).collect();
+                                let (rect_x, rect_y) = align_adjust(
                                     self.align_targets,
                                     &selected_rects,
                                     &reference_rects,
                                     raw,
                                     threshold,
-                                )
+                                );
+                                let (socket_x, socket_y) = match self.align_targets.sockets {
+                                    true => {
+                                        let sockets =
+                                            |id: &NodeId| align_sockets(&gmem, layout, id);
+                                        let mut selected_ids: Vec<NodeId> =
+                                            gmem.selection.nodes.iter().copied().collect();
+                                        selected_ids.sort();
+                                        let selected: Vec<AlignSockets> =
+                                            selected_ids.iter().filter_map(sockets).collect();
+                                        let references: Vec<AlignSockets> =
+                                            refs.iter().filter_map(|(id, _)| sockets(id)).collect();
+                                        socket_align_adjust(&selected, &references, raw, threshold)
+                                    }
+                                    false => (None, None),
+                                };
+                                (nearer(socket_x, rect_x), nearer(socket_y, rect_y))
                             } else {
                                 (None, None)
                             };
@@ -1875,6 +1899,14 @@ struct AlignLine {
     span: egui::Rangef,
 }
 
+/// The sockets of a node at its current layout position, for socket alignment.
+#[derive(Clone, Debug, PartialEq)]
+struct AlignSockets {
+    flow: egui::Direction,
+    inputs: Vec<egui::Pos2>,
+    outputs: Vec<egui::Pos2>,
+}
+
 /// Per-axis snap-alignment of a dragged group to the surrounding nodes.
 ///
 /// The dragged group's bounding box (the union of `selected_rects`) is moved by
@@ -1951,6 +1983,82 @@ fn align_adjust(
     (line_x, line_y)
 }
 
+/// The sockets of node `id` at its position in `layout`.
+///
+/// The recorded sockets are from the frame in which the node last drew, so
+/// they move by the distance the node has moved since.
+fn align_sockets(gmem: &GraphTempMemory, layout: &Layout, id: &NodeId) -> Option<AlignSockets> {
+    let sockets = gmem.sockets.get(id)?;
+    let shift = *layout.get(id)? - *gmem.node_positions.get(id)?;
+    Some(AlignSockets {
+        flow: sockets.flow,
+        inputs: sockets.inputs.values().map(|&p| p + shift).collect(),
+        outputs: sockets.outputs.values().map(|&p| p + shift).collect(),
+    })
+}
+
+/// Per-axis snap-alignment of the sockets of a dragged group to the sockets
+/// of the surrounding nodes.
+///
+/// The `selected` sockets move by `raw_delta`. Each dragged output is then
+/// matched with each reference input downstream of it, and each dragged input
+/// with each reference output upstream of it. Only nodes of the same flow
+/// match, and only on the axis across their flow. The closest match within
+/// `threshold` (in graph units) wins. The guide line runs between the two
+/// sockets.
+fn socket_align_adjust(
+    selected: &[AlignSockets],
+    references: &[AlignSockets],
+    raw_delta: egui::Vec2,
+    threshold: f32,
+) -> (Option<AlignLine>, Option<AlignLine>) {
+    if !threshold.is_finite() || threshold <= 0.0 {
+        return (None, None);
+    }
+    let mut best_x: Option<AlignLine> = None;
+    let mut best_y: Option<AlignLine> = None;
+    for d in selected {
+        let downstream = output_normal(d.flow);
+        // A flow along y aligns sockets on x, and the reverse.
+        let across_x = downstream.x == 0.0;
+        let (best, across, along): (_, fn(egui::Pos2) -> f32, fn(egui::Pos2) -> f32) =
+            match across_x {
+                true => (&mut best_x, |p| p.x, |p| p.y),
+                false => (&mut best_y, |p| p.y, |p| p.x),
+            };
+        for r in references.iter().filter(|r| r.flow == d.flow) {
+            let dragged_outputs = d.outputs.iter().map(|&o| o + raw_delta);
+            let pairs_down = dragged_outputs.flat_map(|o| r.inputs.iter().map(move |&i| (o, i)));
+            let dragged_inputs = d.inputs.iter().map(|&i| i + raw_delta);
+            let pairs_up = dragged_inputs.flat_map(|i| r.outputs.iter().map(move |&o| (i, o)));
+            // In each pair, the second socket is the reference.
+            let downstream_pairs = pairs_down.filter(|&(o, i)| (i - o).dot(downstream) > 0.0);
+            let upstream_pairs = pairs_up.filter(|&(i, o)| (i - o).dot(downstream) > 0.0);
+            for (dragged, reference) in downstream_pairs.chain(upstream_pairs) {
+                let adjust = across(reference) - across(dragged);
+                if adjust.abs() <= threshold && best.map_or(true, |b| adjust.abs() < b.adjust.abs())
+                {
+                    *best = Some(AlignLine {
+                        adjust,
+                        pos: across(reference),
+                        span: egui::Rangef::new(along(dragged), along(reference)).as_positive(),
+                    });
+                }
+            }
+        }
+    }
+    (best_x, best_y)
+}
+
+/// The alignment of `a` and `b` that moves the dragged nodes the least.
+/// A tie keeps `a`.
+fn nearer(a: Option<AlignLine>, b: Option<AlignLine>) -> Option<AlignLine> {
+    match (a, b) {
+        (Some(a), Some(b)) if b.adjust.abs() < a.adjust.abs() => Some(b),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Paint the subtle alignment guide lines collected during a drag. Each entry
 /// is `(is_x_axis, line)`: an x-axis match draws a vertical line, a y-axis match
 /// a horizontal one. Drawn in graph space; the stroke width is treated as screen
@@ -1996,7 +2104,8 @@ fn memory(ui: &egui::Ui, graph_id: egui::Id) -> Arc<Mutex<GraphTempMemory>> {
 mod tests {
     use super::{
         align_adjust, align_nodes, dot_grid_step, infer_alignment, maintain_zoom_scene_rect,
-        snap_f32, AlignBy, AlignTargets, Alignment, Layout, NodeId, Snap,
+        nearer, snap_f32, socket_align_adjust, AlignBy, AlignLine, AlignSockets, AlignTargets,
+        Alignment, Layout, NodeId, Snap,
     };
     use egui::{Rangef, Rect, Vec2};
     use std::collections::HashMap;
@@ -2127,10 +2236,12 @@ mod tests {
     const EDGES: AlignTargets = AlignTargets {
         edges: true,
         centers: false,
+        sockets: false,
     };
     const CENTERS: AlignTargets = AlignTargets {
         edges: false,
         centers: true,
+        sockets: false,
     };
 
     /// `align_adjust` reduced to just the per-axis adjustments, for brevity.
@@ -2270,6 +2381,108 @@ mod tests {
         assert_eq!(x.pos, 2.0); // the reference left edge
         assert_eq!(x.span, Rangef::new(0.0, 28.0));
         assert!(y.is_none());
+    }
+
+    /// A node with one input at `input` and one output at `output`.
+    fn sockets(flow: egui::Direction, input: (f32, f32), output: (f32, f32)) -> AlignSockets {
+        AlignSockets {
+            flow,
+            inputs: vec![egui::pos2(input.0, input.1)],
+            outputs: vec![egui::pos2(output.0, output.1)],
+        }
+    }
+
+    /// `socket_align_adjust` reduced to just the per-axis adjustments.
+    fn socket_align(
+        sel: &[AlignSockets],
+        refs: &[AlignSockets],
+        raw: Vec2,
+    ) -> (Option<f32>, Option<f32>) {
+        let (x, y) = socket_align_adjust(sel, refs, raw, 5.0);
+        (x.map(|l| l.adjust), y.map(|l| l.adjust))
+    }
+
+    #[test]
+    fn socket_align_output_to_input_below() {
+        let down = egui::Direction::TopDown;
+        // The dragged output at x 10 is 3 left of the input below at x 13.
+        let sel = [sockets(down, (10.0, 0.0), (10.0, 20.0))];
+        let below = [sockets(down, (13.0, 50.0), (13.0, 70.0))];
+        assert_eq!(socket_align(&sel, &below, Vec2::ZERO), (Some(3.0), None));
+        // A node above offers its output to the dragged input instead.
+        let above = [sockets(down, (13.0, -70.0), (13.0, -50.0))];
+        assert_eq!(socket_align(&sel, &above, Vec2::ZERO), (Some(3.0), None));
+        // The raw delta moves the dragged sockets first.
+        let raw = egui::vec2(100.0, 0.0);
+        let far = [sockets(down, (112.0, 50.0), (112.0, 70.0))];
+        assert_eq!(socket_align(&sel, &far, raw), (Some(2.0), None));
+    }
+
+    #[test]
+    fn socket_align_needs_flow_order_and_range() {
+        let down = egui::Direction::TopDown;
+        let sel = [sockets(down, (10.0, 0.0), (10.0, 20.0))];
+        // A node beside the dragged one is neither below nor above it.
+        let beside = [sockets(down, (13.0, 0.0), (13.0, 20.0))];
+        assert_eq!(socket_align(&sel, &beside, Vec2::ZERO), (None, None));
+        // A socket beyond the threshold does not snap.
+        let wide = [sockets(down, (16.0, 50.0), (16.0, 70.0))];
+        assert_eq!(socket_align(&sel, &wide, Vec2::ZERO), (None, None));
+        // Nodes of another flow do not align their sockets.
+        let across = [sockets(
+            egui::Direction::LeftToRight,
+            (13.0, 50.0),
+            (13.0, 70.0),
+        )];
+        assert_eq!(socket_align(&sel, &across, Vec2::ZERO), (None, None));
+    }
+
+    #[test]
+    fn socket_align_follows_the_flow_axis() {
+        let right = egui::Direction::LeftToRight;
+        // Left to right, the output on the right aligns on y with an input
+        // further right.
+        let sel = [sockets(right, (0.0, 10.0), (20.0, 10.0))];
+        let next = [sockets(right, (50.0, 12.0), (70.0, 12.0))];
+        assert_eq!(socket_align(&sel, &next, Vec2::ZERO), (None, Some(2.0)));
+    }
+
+    #[test]
+    fn socket_align_group_takes_the_closest_match() {
+        let down = egui::Direction::TopDown;
+        let sel = [
+            sockets(down, (0.0, 0.0), (0.0, 20.0)),
+            sockets(down, (40.0, 0.0), (40.0, 20.0)),
+        ];
+        let below = [
+            sockets(down, (4.0, 50.0), (4.0, 70.0)),
+            sockets(down, (39.0, 50.0), (39.0, 70.0)),
+        ];
+        assert_eq!(socket_align(&sel, &below, Vec2::ZERO), (Some(-1.0), None));
+    }
+
+    #[test]
+    fn socket_align_line_runs_between_the_sockets() {
+        let down = egui::Direction::TopDown;
+        let sel = [sockets(down, (10.0, 0.0), (10.0, 20.0))];
+        let below = [sockets(down, (12.0, 50.0), (12.0, 70.0))];
+        let (x, _) = socket_align_adjust(&sel, &below, Vec2::ZERO, 5.0);
+        let x = x.expect("x axis should align");
+        assert_eq!(x.pos, 12.0);
+        assert_eq!(x.span, Rangef::new(20.0, 50.0));
+    }
+
+    #[test]
+    fn nearer_prefers_the_smaller_adjust_then_the_first() {
+        let line = |adjust| AlignLine {
+            adjust,
+            pos: 0.0,
+            span: Rangef::new(0.0, 1.0),
+        };
+        assert_eq!(nearer(Some(line(3.0)), Some(line(-1.0))), Some(line(-1.0)));
+        assert_eq!(nearer(Some(line(2.0)), Some(line(-2.0))), Some(line(2.0)));
+        assert_eq!(nearer(None, Some(line(1.0))), Some(line(1.0)));
+        assert_eq!(nearer(None, None), None);
     }
 
     fn pos(x: f32, y: f32) -> egui::Pos2 {

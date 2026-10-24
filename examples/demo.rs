@@ -70,6 +70,7 @@ struct State {
     align: bool,
     align_edges: bool,
     align_centers: bool,
+    align_sockets: bool,
     align_threshold: f32,
     align_guides: bool,
     /// Which node feature the "Align Selection" button unifies.
@@ -150,6 +151,7 @@ impl App {
             align: true,
             align_edges: true,
             align_centers: false,
+            align_sockets: true,
             align_threshold: 5.0,
             align_guides: true,
             align_by: egui_graph::AlignBy::Min,
@@ -358,6 +360,7 @@ fn graph(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut State) {
         .align_targets(egui_graph::AlignTargets {
             edges: state.align_edges,
             centers: state.align_centers,
+            sockets: state.align_sockets,
         })
         .align_threshold(state.align_threshold)
         .align_guides(state.align_guides)
@@ -667,6 +670,7 @@ fn graph_config(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut Stat
             ui.horizontal(|ui| {
                 ui.checkbox(&mut state.align_edges, "Edges");
                 ui.checkbox(&mut state.align_centers, "Centers");
+                ui.checkbox(&mut state.align_sockets, "Sockets");
                 ui.checkbox(&mut state.align_guides, "Guides");
             });
             ui.horizontal(|ui| {
